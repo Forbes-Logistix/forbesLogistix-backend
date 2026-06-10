@@ -10,6 +10,9 @@ dotenv.config();
 
 const app = express();
 
+// Don't advertise the framework in response headers.
+app.disable('x-powered-by');
+
 // Vercel sits behind a proxy; trust it so rate limiter sees the real client IP.
 app.set('trust proxy', 1);
 
@@ -34,11 +37,10 @@ const allowedOrigins =
 // this off shrinks the CSRF surface. The allowlist above is still enforced.
 app.use(cors({
     origin: function (origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
+        // Disallowed origins get a clean CORS denial (no ACAO header on the
+        // response) instead of a thrown error, which Express would otherwise
+        // surface as a 500.
+        callback(null, !origin || allowedOrigins.includes(origin));
     },
     methods: ['GET', 'POST'],
 }));
