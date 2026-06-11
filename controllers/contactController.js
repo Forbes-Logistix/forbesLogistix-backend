@@ -1,4 +1,5 @@
 const { sendViaGraph } = require('../utils/graphMailer');
+const { verifyTurnstile } = require('../utils/turnstile');
 
 // Conservative field length caps for the contact form.
 const MAX_NAME = 100;
@@ -8,39 +9,9 @@ const MAX_MESSAGE = 5000;
 // Pragmatic email regex -- catches obvious malformed input without being a full RFC parser.
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Optional Cloudflare Turnstile verification. If TURNSTILE_SECRET is unset, verification
-// is skipped so the endpoint stays functional until the site key is provisioned.
-const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET;
-const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
-
-async function verifyTurnstile(token, remoteIp) {
-    if (!TURNSTILE_SECRET) {
-        return { ok: true, skipped: true };
-    }
-    if (!token || typeof token !== 'string') {
-        return { ok: false, reason: 'missing-token' };
-    }
-    try {
-        const params = new URLSearchParams();
-        params.append('secret', TURNSTILE_SECRET);
-        params.append('response', token);
-        if (remoteIp) params.append('remoteip', remoteIp);
-
-        const resp = await fetch(TURNSTILE_VERIFY_URL, {
-            method: 'POST',
-            body: params,
-        });
-        const data = await resp.json();
-        return { ok: data && data.success === true };
-    } catch (err) {
-        console.error('Turnstile verification error:', err.message);
-        return { ok: false, reason: 'verify-failed' };
-    }
-}
-
 exports.sendContact = async (req, res) => {
     try {
-        const { name, email, message, contactConsent, turnstileToken } = req.body || {};
+        const { name, email, message, contactConsent, acceptTerms, turnstileToken } = req.body || {};
 
         if (!name || !email || !message) {
             return res.status(400).json({ message: 'Name, email, and message are required.' });
@@ -86,6 +57,15 @@ exports.sendContact = async (req, res) => {
             String(s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
         const consentBool = contactConsent === true;
+        // The frontend requires the Terms/Privacy checkbox before submitting,
+        // and (as of 2026-06) transmits it so it lands in the consent record.
+        // Recorded, not enforced: clients deployed before that change don't
+        // send the field. Flip to a 400 rejection once the frontend change
+        // has been live for a while.
+        const termsLine =
+            typeof acceptTerms === 'boolean'
+                ? (acceptTerms ? 'yes' : 'no')
+                : 'not transmitted (pre-2026-06 client)';
         const submittedAt = new Date().toISOString();
         const submitterIp = req.ip || 'unknown';
 
@@ -97,6 +77,7 @@ exports.sendContact = async (req, res) => {
                 `Name: ${trimmedName}\nEmail: ${trimmedEmail}\n\nMessage:\n${trimmedMessage}\n\n` +
                 `--- Consent record ---\n` +
                 `Contact-response consent (calls/SMS for this inquiry): ${consentBool ? 'yes' : 'no'}\n` +
+                `Terms/Privacy acknowledged: ${termsLine}\n` +
                 `Submitted: ${submittedAt}\n` +
                 `IP: ${submitterIp}\n`,
             html:
@@ -107,6 +88,7 @@ exports.sendContact = async (req, res) => {
                 `<p><strong>Consent record</strong></p>` +
                 `<ul>` +
                 `<li>Contact-response consent (calls/SMS for this inquiry): <strong>${consentBool ? 'yes' : 'no'}</strong></li>` +
+                `<li>Terms/Privacy acknowledged: <strong>${safe(termsLine)}</strong></li>` +
                 `<li>Submitted: ${safe(submittedAt)}</li>` +
                 `<li>IP: ${safe(submitterIp)}</li>` +
                 `</ul>`,

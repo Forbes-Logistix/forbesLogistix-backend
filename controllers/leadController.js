@@ -1,4 +1,5 @@
 const { sendViaGraph } = require('../utils/graphMailer');
+const { verifyTurnstile } = require('../utils/turnstile');
 
 // Conservative caps. Quick Apply is a 3-field form; we don't need much room.
 const MAX_NAME = 100;
@@ -7,35 +8,6 @@ const MAX_YEARS = 3; // numeric value as string, e.g. "0" .. "60"
 
 // Lead recipient. Env var wins if set; otherwise the recruiting alias is used.
 const LEAD_RECEIVER_EMAIL = process.env.LEAD_RECEIVER_EMAIL || 'recruiting@forbeslogistix.com';
-
-// Optional Cloudflare Turnstile verification, shared with the contact form.
-const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET;
-const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
-
-async function verifyTurnstile(token, remoteIp) {
-    if (!TURNSTILE_SECRET) {
-        return { ok: true, skipped: true };
-    }
-    if (!token || typeof token !== 'string') {
-        return { ok: false, reason: 'missing-token' };
-    }
-    try {
-        const params = new URLSearchParams();
-        params.append('secret', TURNSTILE_SECRET);
-        params.append('response', token);
-        if (remoteIp) params.append('remoteip', remoteIp);
-
-        const resp = await fetch(TURNSTILE_VERIFY_URL, {
-            method: 'POST',
-            body: params,
-        });
-        const data = await resp.json();
-        return { ok: data && data.success === true };
-    } catch (err) {
-        console.error('Turnstile verification error:', err.message);
-        return { ok: false, reason: 'verify-failed' };
-    }
-}
 
 // US-style phone digits-only check: 10 digits after stripping non-digits.
 // Accept 11-digit when it starts with 1.
@@ -106,8 +78,9 @@ exports.sendLead = async (req, res) => {
         }
 
         const yearsNum = Number(yearsStr);
-        if (!Number.isFinite(yearsNum) || yearsNum < 0 || yearsNum > 60) {
-            return res.status(400).json({ message: 'Please provide a valid years-of-experience number.' });
+        // Whole years only — Number.isInteger also covers NaN/Infinity.
+        if (!Number.isInteger(yearsNum) || yearsNum < 0 || yearsNum > 60) {
+            return res.status(400).json({ message: 'Please provide a valid years-of-experience number (whole years, 0-60).' });
         }
 
         const verify = await verifyTurnstile(turnstileToken, req.ip);

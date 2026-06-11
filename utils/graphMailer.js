@@ -17,6 +17,11 @@ let cachedToken = null;
 let cachedTokenExpiresAt = 0;
 const TOKEN_SAFETY_MARGIN_MS = 60 * 1000; // refresh 1 min before expiry
 
+// Outbound calls get explicit timeouts so a hung request can't hold the
+// serverless function until the platform kills it.
+const TOKEN_TIMEOUT_MS = 8000;
+const SENDMAIL_TIMEOUT_MS = 10000;
+
 async function getAccessToken() {
     const now = Date.now();
     if (cachedToken && now < cachedTokenExpiresAt - TOKEN_SAFETY_MARGIN_MS) {
@@ -42,6 +47,7 @@ async function getAccessToken() {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
+        signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
     });
 
     if (!resp.ok) {
@@ -61,7 +67,7 @@ async function sendViaGraph({ to, subject, text, html, replyTo, attachments }) {
     const sender = process.env.GRAPH_SENDER;
     if (!sender) throw new Error('Missing GRAPH_SENDER environment variable');
 
-    const token = await getAccessToken();
+    let token = await getAccessToken();
 
     const recipients = Array.isArray(to) ? to : [to];
 
@@ -91,14 +97,37 @@ async function sendViaGraph({ to, subject, text, html, replyTo, attachments }) {
 
     const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`;
 
-    const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message, saveToSentItems: false }),
-    });
+    // saveToSentItems keeps a copy of every send in the noreply@ mailbox's
+    // Sent Items. Form submissions (and their TCPA consent records) otherwise
+    // exist only as the single delivered email — this is the free second copy.
+    const body = JSON.stringify({ message, saveToSentItems: true });
+
+    const attemptSend = async () =>
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body,
+            signal: AbortSignal.timeout(SENDMAIL_TIMEOUT_MS),
+        });
+
+    let resp = await attemptSend();
+
+    // Retry exactly once, and only on responses that prove the send did NOT
+    // happen (401 auth, 429 throttle, 5xx). Timeouts are deliberately not
+    // retried: an aborted request may still have been delivered, and a retry
+    // could double-send.
+    if (!resp.ok && (resp.status === 401 || resp.status === 429 || resp.status >= 500)) {
+        if (resp.status === 401) {
+            cachedToken = null;
+            cachedTokenExpiresAt = 0;
+            token = await getAccessToken();
+        }
+        await new Promise((r) => setTimeout(r, 750));
+        resp = await attemptSend();
+    }
 
     if (!resp.ok) {
         const err = await resp.text();
