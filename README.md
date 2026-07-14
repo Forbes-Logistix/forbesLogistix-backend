@@ -28,7 +28,7 @@ All POST routes: JSON body (100 kb cap), per-IP rate limiting (5/10 min on conta
 | `GRAPH_SENDER` | Sending mailbox UPN (`noreply@forbeslogistix.com`) |
 | `CONTACT_RECEIVER_EMAIL` | Contact-form recipient |
 | `LEAD_RECEIVER_EMAIL` | Lead recipient (defaults to `recruiting@forbeslogistix.com`) |
-| `CLIENT_RECEIVER_EMAIL` | PDF-application recipient (scaffolding) |
+| `APPLICATION_RECEIVER_EMAIL` | DOT-application recipient (optional; defaults to `recruiting@forbeslogistix.com`) |
 | `TURNSTILE_SECRET` | Cloudflare Turnstile secret; verification is skipped when unset |
 
 ## Deploys
