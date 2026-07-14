@@ -263,10 +263,9 @@ module.exports = function generatePDF(app) {
             };
 
             // ----- FCRA disclosure: this page must contain ONLY the disclosure.
-            // TODO(owner): once a screening vendor (CRA) is chosen, replace the
-            // final sentence with the agency's name, address, phone, and website
-            // (required for California applicants; best practice everywhere) —
-            // and make the same edit in ApplicationClient.js.
+            // CRA named 2026-07-14 per owner: Data Facts, Inc. (verified against
+            // datafacts.com). If the vendor ever changes, update here AND in the
+            // frontend's ApplicationClient.js (naming required for CA applicants).
             doc.addPage();
             docTitle('DISCLOSURE REGARDING BACKGROUND REPORTS');
             para(
@@ -274,9 +273,9 @@ module.exports = function generatePDF(app) {
                 'employment purposes, including deciding whether to hire or engage you as a driver and, if you are ' +
                 'hired or engaged, for decisions about your continued employment or engagement to the extent permitted ' +
                 'by law. The reports may include information about your criminal record history, your driving and ' +
-                'motor vehicle records, and verification of your prior employment. The reports will be obtained ' +
-                'through a consumer reporting agency. You may request the agency’s name, address, telephone number, ' +
-                'and website from Forbes Logistix at any time by calling (601) 300-5529.'
+                'motor vehicle records, and verification of your prior employment. The reports will be obtained from ' +
+                'the following consumer reporting agency: Data Facts, Inc., 8000 Centerview Parkway, Suite 400, ' +
+                'Cordova, TN 38018, toll-free (800) 264-4110, www.datafacts.com.'
             );
 
             // ----- Investigative consumer report disclosure (15 U.S.C. 1681d).
@@ -300,11 +299,11 @@ module.exports = function generatePDF(app) {
             para(
                 'I acknowledge that I have received and read the Disclosure Regarding Background Reports and the ' +
                 'Investigative Consumer Report Disclosure from Forbes Logistix LLC. I authorize Forbes Logistix LLC to ' +
-                'obtain consumer reports and investigative consumer reports about me in connection with my application ' +
-                'and, to the extent permitted by applicable law, at any time during my employment or contract with ' +
-                'Forbes Logistix LLC. I authorize state motor vehicle agencies, courts, my previous employers, and ' +
-                'other information sources to furnish information about me to Forbes Logistix LLC and its consumer ' +
-                'reporting agency for these reports. I understand that typing my full legal name constitutes my ' +
+                'obtain consumer reports and investigative consumer reports about me from Data Facts, Inc. in ' +
+                'connection with my application and, to the extent permitted by applicable law, at any time during my ' +
+                'employment or contract with Forbes Logistix LLC. I authorize state motor vehicle agencies, courts, my ' +
+                'previous employers, and other information sources to furnish information about me to Data Facts, Inc. ' +
+                'and Forbes Logistix LLC for these reports. I understand that typing my full legal name constitutes my ' +
                 'electronic signature.'
             );
             para(
@@ -539,10 +538,10 @@ module.exports = function generatePDF(app) {
                 'CALIFORNIA APPLICANTS: Under the California Investigative Consumer Reporting Agencies Act, you may ' +
                 'view the file the consumer reporting agency keeps on you during normal business hours and obtain a ' +
                 'copy of your report. The nature and scope of the investigation is: verification of criminal record ' +
-                'history, driving records, and prior employment for driver hiring. The agency’s name, address, ' +
-                'telephone number, and privacy-practices website are available from Forbes Logistix LLC at ' +
-                '(601) 300-5529. A summary of your rights under California Civil Code section 1786.22 is available ' +
-                'from the agency on request.'
+                'history, driving records, and prior employment for driver hiring. The agency is Data Facts, Inc., ' +
+                '8000 Centerview Parkway, Suite 400, Cordova, TN 38018, toll-free (800) 264-4110; its privacy ' +
+                'practices are available at www.datafacts.com. A summary of your rights under California Civil Code ' +
+                'section 1786.22 is available from the agency on request.'
             );
             para(
                 'NEW YORK APPLICANTS: Upon request, you will be informed whether a consumer report was requested about ' +
