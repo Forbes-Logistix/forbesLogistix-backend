@@ -1,141 +1,192 @@
-// SCAFFOLDING: not currently called by any frontend form. See
-// controllers/pdfController.js for the full note. Reactivated when the
-// full DOT driver application form is built.
+// Generates the Driver Qualification Application PDF (49 CFR 391.21) from
+// the structured payload validated by controllers/pdfController.js.
+//
+// DELIBERATE OMISSION: the applicant's Social Security Number is never
+// collected online. The PDF prints a blank OFFICE-USE line for it — the
+// owner collects it by phone and writes it in. Do not add an SSN field.
 
 const PDFDocument = require('pdfkit');
 
-module.exports = function generatePDF(data) {
-  return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument();
-      const buffers = [];
+// Carrier identity block — 391.21(b)(1) requires the application to show
+// the name and address of the employing motor carrier.
+const CARRIER = {
+    name: 'Forbes Logistix, LLC',
+    address: '3180 Utica Ave, Jackson, MS 39209',
+    identifiers: 'USDOT 4361817  ·  MC 1706978',
+};
 
-      doc.on('data', buffers.push.bind(buffers));
-      doc.on('end', () => {
-        const pdfData = Buffer.concat(buffers);
-        resolve(pdfData);
-      });
+const POSITION_LABELS = {
+    'flatbed-southeast': 'Company Flatbed Driver — Southeast',
+    'reefer-dallas': 'Company Reefer Driver — Dedicated Dallas Outbound',
+};
 
-      doc.fontSize(20).text('Driver Application', { align: 'center' }).moveDown();
+// Strip control characters; pdfkit renders anything else safely as text.
+const clean = (v) =>
+    String(v ?? '')
+        .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
+        .trim();
 
-      // --- Current Address ---
-      const ca = data?.currentAddress || {};
-      doc.fontSize(14).text('Current Address');
-      doc.fontSize(12)
-        .text(`Address: ${ca.address || 'N/A'}`)
-        .text(`City: ${ca.city || 'N/A'}`)
-        .text(`State: ${ca.state || 'N/A'}`)
-        .text(`ZIP: ${ca.zip || 'N/A'}`).moveDown();
+const show = (v) => (clean(v) === '' ? '—' : clean(v));
+const yn = (v) => (v === true ? 'Yes' : v === false ? 'No' : '—');
 
-      // --- Previous Addresses ---
-      doc.fontSize(14).text('Previous Addresses');
-      (data.previousAddresses || []).forEach((addr, i) => {
-        doc.fontSize(12).text(`Address ${i + 1}: ${addr.address || 'N/A'}, ${addr.city || 'N/A'}, ${addr.state || 'N/A'}, ${addr.zip || 'N/A'}`);
-      });
-      doc.moveDown();
+module.exports = function generatePDF(app) {
+    return new Promise((resolve, reject) => {
+        try {
+            const doc = new PDFDocument({ size: 'LETTER', margin: 54 });
+            const buffers = [];
+            doc.on('data', buffers.push.bind(buffers));
+            doc.on('end', () => resolve(Buffer.concat(buffers)));
 
-      // --- Medical ---
-      const med = data?.medical || {};
-      doc.fontSize(14).text('DOT Medical');
-      doc.fontSize(12).text(`Currently Certified: ${med.isCurrent ? 'Yes' : 'No'}`).moveDown();
+            const line = () => {
+                doc.moveDown(0.4);
+                doc.moveTo(doc.page.margins.left, doc.y)
+                    .lineTo(doc.page.width - doc.page.margins.right, doc.y)
+                    .lineWidth(0.5)
+                    .strokeColor('#999999')
+                    .stroke();
+                doc.moveDown(0.4);
+            };
 
-      // --- Current Employer ---
-      const ce = data?.currentEmployer || {};
-      doc.fontSize(14).text('Current Employer');
-      doc.fontSize(12)
-        .text(`Employer: ${ce.employer || 'N/A'}`)
-        .text(`From: ${ce.from || 'N/A'} To: ${ce.to || 'N/A'}`)
-        .text(`Position: ${ce.position || 'N/A'}`)
-        .text(`Phone: ${ce.phone || 'N/A'}`)
-        .text(`Address: ${ce.address || 'N/A'}`)
-        .text(`Reason for Leaving: ${ce.reason || 'N/A'}`)
-        .text(`FMCSR: ${ce.fmcsr || 'N/A'}`)
-        .text(`DOT Drug Test: ${ce.dotDrugTest || 'N/A'}`).moveDown();
+            const section = (title) => {
+                doc.moveDown(0.6);
+                doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text(title.toUpperCase());
+                doc.moveDown(0.2);
+                doc.font('Helvetica').fontSize(10).fillColor('#111111');
+            };
 
-      // --- Previous Employers ---
-      doc.fontSize(14).text('Previous Employers');
-      (data.previousEmployers || []).forEach((pe, i) => {
-        doc.fontSize(12)
-          .text(`Employer ${i + 1}: ${pe.employer || 'N/A'}`)
-          .text(`From: ${pe.from || 'N/A'} To: ${pe.to || 'N/A'}`)
-          .text(`Position: ${pe.position || 'N/A'}`)
-          .text(`Phone: ${pe.phone || 'N/A'}`)
-          .text(`Address: ${pe.address || 'N/A'}`)
-          .text(`Reason: ${pe.reason || 'N/A'}`)
-          .moveDown();
-      });
+            const field = (label, value) => {
+                doc.font('Helvetica-Bold').text(`${label}: `, { continued: true });
+                doc.font('Helvetica').text(show(value));
+            };
 
-      // --- Driving Experience ---
-      const dx = data?.drivingExperience?.equipment || {};
-      doc.fontSize(14).text('Driving Experience');
-      doc.fontSize(12)
-        .text(`Straight Truck: ${dx.straightTruckSelected ? 'Yes' : 'No'} | From: ${dx.straightTruckFrom || 'N/A'} | To: ${dx.straightTruckTo || 'N/A'} | Mileage: ${dx.straightTruckMileage || 'N/A'}`)
-        .text(`Tractor Semi: ${dx.tractorSemiSelected ? 'Yes' : 'No'} | From: ${dx.tractorSemiFrom || 'N/A'} | To: ${dx.tractorSemiTo || 'N/A'} | Mileage: ${dx.tractorSemiMileage || 'N/A'}`)
-        .text(`Tractor Two Trailers: ${dx.tractorTwoSelected ? 'Yes' : 'No'} | From: ${dx.tractorTwoFrom || 'N/A'} | To: ${dx.tractorTwoTo || 'N/A'} | Mileage: ${dx.tractorTwoMileage || 'N/A'}`)
-        .text(`Tractor Triple Trailers: ${dx.tractorTripleSelected ? 'Yes' : 'No'} | From: ${dx.tractorTripleFrom || 'N/A'} | To: ${dx.tractorTripleTo || 'N/A'} | Mileage: ${dx.tractorTripleMileage || 'N/A'}`)
-        .moveDown();
+            // ---------- Header ----------
+            doc.font('Helvetica-Bold').fontSize(16).text('DRIVER QUALIFICATION APPLICATION', { align: 'center' });
+            doc.moveDown(0.2);
+            doc.font('Helvetica').fontSize(9).fillColor('#333333').text(
+                `${CARRIER.name}  ·  ${CARRIER.address}  ·  ${CARRIER.identifiers}`,
+                { align: 'center' }
+            );
+            doc.fontSize(9).text('Application per 49 CFR 391.21 — submitted electronically via forbeslogistix.com/application', {
+                align: 'center',
+            });
+            doc.fillColor('#111111');
+            line();
 
-      doc.fontSize(14).text('States Operated In');
-      doc.fontSize(12).text(`${data?.drivingExperience?.statesOperated || 'N/A'}`).moveDown();
+            // ---------- Position ----------
+            section('Position Applied For');
+            doc.text(POSITION_LABELS[app.position] || show(app.position));
 
-      doc.fontSize(14).text('Courses');
-      (data?.drivingExperience?.courses || []).forEach((c, i) => {
-        doc.fontSize(12).text(`Course ${i + 1}: ${c}`);
-      });
-      doc.moveDown();
+            // ---------- Personal ----------
+            const p = app.personal || {};
+            section('Applicant');
+            field('Full legal name', p.fullName);
+            field('Phone', p.phone);
+            field('Email', p.email || '— (not provided)');
+            field('Date of birth', p.dob);
 
-      doc.fontSize(14).text('Awards');
-      (data?.drivingExperience?.awards || []).forEach((a, i) => {
-        doc.fontSize(12).text(`Award ${i + 1}: ${a}`);
-      });
-      doc.moveDown();
+            doc.moveDown(0.5);
+            doc.font('Helvetica-Bold').fontSize(10).fillColor('#7a0000')
+                .text('OFFICE USE — collected by phone, never online:');
+            doc.font('Helvetica').fontSize(11).fillColor('#000000')
+                .text('Social Security Number:  ____________________________');
+            doc.fontSize(10).fillColor('#111111');
 
-      // --- Accident Records ---
-      doc.fontSize(14).text('Accident Records');
-      (data?.accidentRecords || []).forEach((a, i) => {
-        doc.fontSize(12).text(`Accident ${i + 1}: ${JSON.stringify(a)}`);
-      });
-      doc.moveDown();
+            doc.moveDown(0.5);
+            const ca = p.currentAddress || {};
+            field('Current address', `${show(ca.street)}, ${show(ca.city)}, ${show(ca.state)} ${show(ca.zip)}`);
+            field('At this address since (year)', ca.sinceYear);
+            const prevAddrs = Array.isArray(p.previousAddresses) ? p.previousAddresses : [];
+            if (prevAddrs.length) {
+                doc.moveDown(0.3);
+                doc.font('Helvetica-Bold').text('Previous addresses (last 3 years):');
+                doc.font('Helvetica');
+                prevAddrs.forEach((a, i) => {
+                    doc.text(`  ${i + 1}. ${show(a.street)}, ${show(a.city)}, ${show(a.state)} ${show(a.zip)}`);
+                });
+            }
 
-      // --- Traffic Convictions ---
-      doc.fontSize(14).text('Traffic Convictions');
-      (data?.trafficConvictions || []).forEach((tc, i) => {
-        doc.fontSize(12).text(`Conviction ${i + 1}: ${JSON.stringify(tc)}`);
-      });
-      doc.moveDown();
+            // ---------- License ----------
+            const lic = app.license || {};
+            section('Commercial Driver’s License');
+            field('Issuing state', lic.state);
+            field('License number', lic.number);
+            field('Class', lic.class);
+            field('Expiration date', lic.expiration);
+            field('Endorsements', lic.endorsements || 'None listed');
+            field('License ever denied, suspended, or revoked', yn(lic.everDeniedRevokedSuspended));
+            if (lic.everDeniedRevokedSuspended) {
+                field('Explanation', lic.deniedExplanation);
+            }
 
-      // --- Disclosures ---
-      doc.fontSize(14).text('Disclosures');
-      (data?.disclosures || []).forEach((d, i) => {
-        doc.fontSize(12).text(`Disclosure ${i + 1}: ${JSON.stringify(d)}`);
-      });
-      doc.moveDown();
+            // ---------- Experience ----------
+            section('Driving Experience');
+            const exp = Array.isArray(app.experience) ? app.experience : [];
+            exp.forEach((e, i) => {
+                doc.text(
+                    `  ${i + 1}. ${show(e.equipmentType)} — ${show(e.years)} year(s), approx. ${show(e.approxMiles)} miles`
+                );
+            });
 
-      // --- License History ---
-      doc.fontSize(14).text('License History');
-      (data?.licenseHistory || []).forEach((l, i) => {
-        doc.fontSize(12).text(`License ${i + 1}: ${JSON.stringify(l)}`);
-      });
-      doc.moveDown();
+            // ---------- Accidents ----------
+            section('Accident Record — Past 3 Years');
+            const acc = Array.isArray(app.accidents) ? app.accidents : [];
+            if (!acc.length) {
+                doc.text('Applicant reports NO accidents in the past 3 years.');
+            } else {
+                acc.forEach((a, i) => {
+                    doc.text(
+                        `  ${i + 1}. ${show(a.date)} — ${show(a.description)}  (fatalities: ${show(a.fatalities)}, injuries: ${show(a.injuries)})`
+                    );
+                });
+            }
 
-      // --- References ---
-      doc.fontSize(14).text('References');
-      (data?.references || []).forEach((r, i) => {
-        doc.fontSize(12).text(`Reference ${i + 1}: ${JSON.stringify(r)}`);
-      });
-      doc.moveDown();
+            // ---------- Violations ----------
+            section('Traffic Convictions & Forfeitures — Past 3 Years');
+            const vio = Array.isArray(app.violations) ? app.violations : [];
+            if (!vio.length) {
+                doc.text('Applicant reports NO convictions or forfeitures in the past 3 years.');
+            } else {
+                vio.forEach((v, i) => {
+                    doc.text(`  ${i + 1}. ${show(v.date)} — ${show(v.offense)} (${show(v.state)}) — penalty: ${show(v.penalty)}`);
+                });
+            }
 
-      // --- Declaration ---
-      const dec = data?.declaration || {};
-      doc.fontSize(14).text('Declaration');
-      doc.fontSize(12)
-        .text(`Signature: ${dec.signature || 'N/A'}`)
-        .text(`Date: ${dec.date || 'N/A'}`);
+            // ---------- Employment ----------
+            section('Employment History (3 years; 10 years for CDL positions)');
+            const emp = Array.isArray(app.employment) ? app.employment : [];
+            emp.forEach((e, i) => {
+                doc.font('Helvetica-Bold').text(`  ${i + 1}. ${show(e.employer)}  (${show(e.from)} – ${show(e.to)})`);
+                doc.font('Helvetica');
+                doc.text(`      Position: ${show(e.position)}  ·  Phone: ${show(e.phone)}  ·  ${show(e.cityState)}`);
+                doc.text(`      Reason for leaving: ${show(e.reasonForLeaving)}`);
+                doc.text(
+                    `      Subject to FMCSRs: ${yn(e.fmcsrSubject)}  ·  Safety-sensitive / DOT drug & alcohol testing: ${yn(e.safetySensitive)}`
+                );
+                doc.moveDown(0.3);
+            });
+            if (clean(app.gapsExplanation)) {
+                field('Employment gaps explained', app.gapsExplanation);
+            }
 
-      doc.end();
-    } catch (err) {
-      console.error('Error generating PDF:', err);
-      reject(err);
-    }
-  });
+            // ---------- Certification ----------
+            const cert = app.certification || {};
+            section('Certification & Electronic Signature');
+            doc.text(
+                'This certifies that this application was completed by me, and that all entries on it and information in it are true and complete to the best of my knowledge.'
+            );
+            doc.moveDown(0.5);
+            field('Electronic signature (typed full legal name)', cert.signature);
+            field('E-signature consent', cert.esignConsent ? 'Agreed — typed name constitutes electronic signature' : '—');
+            field('Signed (Central Time)', app.submittedAtCT);
+            field('Signed (UTC)', app.submittedAtISO);
+            field('Submitted from IP', app.submitterIp);
+            doc.moveDown(1.2);
+            doc.text('Reviewed by (Forbes Logistix): ______________________________     Date: ________________');
+
+            doc.end();
+        } catch (err) {
+            console.error('Error generating PDF:', err);
+            reject(err);
+        }
+    });
 };
