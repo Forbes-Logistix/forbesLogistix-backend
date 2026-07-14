@@ -88,6 +88,15 @@ exports.sendPDF = async (req, res) => {
         if (everDenied && !str(lic.deniedExplanation, 600)) {
             return bad(res, 'Please explain the license denial/suspension/revocation.');
         }
+        // 391.21(b)(5): EACH unexpired license/permit — optional extras list.
+        const additionalLicenses = Array.isArray(body.additionalLicenses)
+            ? body.additionalLicenses.slice(0, 4)
+            : [];
+        for (const l of additionalLicenses) {
+            if (!str(l.state, 40) || !str(l.number, 40) || !isDateStr(l.expiration)) {
+                return bad(res, 'Each additional license needs a state, number, and expiration date.');
+            }
+        }
 
         // ---------- experience ----------
         const experience = Array.isArray(body.experience) ? body.experience.slice(0, 8) : [];
@@ -116,8 +125,16 @@ exports.sendPDF = async (req, res) => {
         const employment = Array.isArray(body.employment) ? body.employment.slice(0, 15) : [];
         if (!employment.length) return bad(res, 'At least one employer is required (past 3 years; 10 for CDL jobs).');
         for (const e of employment) {
-            if (!str(e.employer, 150) || !isMonthStr(e.from) || !isMonthStr(e.to) || !str(e.reasonForLeaving, 300)) {
-                return bad(res, 'Each employer needs a name, from/to dates, and a reason for leaving.');
+            // 391.21(b)(10)(i)/(b)(11) require employer name AND address —
+            // street is required, not just city/state.
+            if (
+                !str(e.employer, 150) ||
+                !str(e.street, 200) ||
+                !isMonthStr(e.from) ||
+                !isMonthStr(e.to) ||
+                !str(e.reasonForLeaving, 300)
+            ) {
+                return bad(res, 'Each employer needs a name, street address, from/to dates, and a reason for leaving.');
             }
         }
 
@@ -138,6 +155,7 @@ exports.sendPDF = async (req, res) => {
             position: body.position,
             personal: { ...p, fullName, email, previousAddresses: prevAddresses },
             license: lic,
+            additionalLicenses,
             experience,
             accidents,
             violations,
@@ -161,8 +179,10 @@ exports.sendPDF = async (req, res) => {
                 `Phone: ${p.phone}\n` +
                 `Position: ${positionLabel}\n` +
                 `Submitted: ${submittedAtCT} (${submittedAtISO})\n\n` +
-                `The complete application is attached as a PDF. Reminder: collect the SSN by phone ` +
-                `and write it in the OFFICE USE block — it is never collected online.`,
+                `The complete application is attached as a PDF. Reminder: the SSN is never collected ` +
+                `online — per 49 CFR 391.21(b) the APPLICANT must write and initial it on the printed ` +
+                `application (SSN block on page 1) before first dispatch. You can take it by phone for ` +
+                `your own records, but the driver's hand completes the document.`,
             attachments: [
                 {
                     filename: `DOT-Application-${lastName}.pdf`,

@@ -86,9 +86,11 @@ module.exports = function generatePDF(app) {
 
             doc.moveDown(0.5);
             doc.font('Helvetica-Bold').fontSize(10).fillColor('#7a0000')
-                .text('OFFICE USE — collected by phone, never online:');
+                .text('SSN — completed BY THE APPLICANT in person (never collected online):');
             doc.font('Helvetica').fontSize(11).fillColor('#000000')
-                .text('Social Security Number:  ____________________________');
+                .text('Social Security Number:  ______________________    Applicant initials: ________    Date: ____________');
+            doc.font('Helvetica').fontSize(8).fillColor('#555555')
+                .text('Per 49 CFR 391.21(b), the application must be completed by the applicant — the applicant writes and initials the SSN above before first dispatch.');
             doc.fontSize(10).fillColor('#111111');
 
             doc.moveDown(0.5);
@@ -113,6 +115,17 @@ module.exports = function generatePDF(app) {
             field('Class', lic.class);
             field('Expiration date', lic.expiration);
             field('Endorsements', lic.endorsements || 'None listed');
+            const addlLic = Array.isArray(app.additionalLicenses) ? app.additionalLicenses : [];
+            if (addlLic.length) {
+                doc.moveDown(0.3);
+                doc.font('Helvetica-Bold').text('Other current licenses/permits:');
+                doc.font('Helvetica');
+                addlLic.forEach((l, i) => {
+                    doc.text(`  ${i + 1}. ${show(l.state)} · ${show(l.number)} · Class ${show(l.class)} · expires ${show(l.expiration)}`);
+                });
+            } else {
+                field('Other current licenses/permits', 'None');
+            }
             field('License ever denied, suspended, or revoked', yn(lic.everDeniedRevokedSuspended));
             if (lic.everDeniedRevokedSuspended) {
                 field('Explanation', lic.deniedExplanation);
@@ -141,7 +154,7 @@ module.exports = function generatePDF(app) {
             }
 
             // ---------- Violations ----------
-            section('Traffic Convictions & Forfeitures — Past 3 Years');
+            section('Traffic Convictions & Bond/Collateral Forfeitures — Past 3 Years');
             const vio = Array.isArray(app.violations) ? app.violations : [];
             if (!vio.length) {
                 doc.text('Applicant reports NO convictions or forfeitures in the past 3 years.');
@@ -151,13 +164,27 @@ module.exports = function generatePDF(app) {
                 });
             }
 
+            // ---------- 391.21(d) notice ----------
+            section('Notice to Applicant — 49 CFR 391.21(d)');
+            doc.fontSize(9).text(
+                'The information you provide regarding your employment history may be used, and your previous employers ' +
+                'will be contacted, for the purpose of investigating your safety performance history as required by ' +
+                '49 CFR 391.23(d) and (e). You have the following rights under 49 CFR 391.23(i): the right to review ' +
+                'information provided by previous employers; the right to have errors in that information corrected by ' +
+                'the previous employer and to have that employer resend the corrected information; and the right to ' +
+                'submit a rebuttal statement attached to the alleged erroneous information if the previous employer and ' +
+                'you cannot agree on its accuracy. This notice was displayed to the applicant in writing before submission.'
+            );
+            doc.fontSize(10);
+
             // ---------- Employment ----------
             section('Employment History (3 years; 10 years for CDL positions)');
             const emp = Array.isArray(app.employment) ? app.employment : [];
             emp.forEach((e, i) => {
                 doc.font('Helvetica-Bold').text(`  ${i + 1}. ${show(e.employer)}  (${show(e.from)} – ${show(e.to)})`);
                 doc.font('Helvetica');
-                doc.text(`      Position: ${show(e.position)}  ·  Phone: ${show(e.phone)}  ·  ${show(e.cityState)}`);
+                doc.text(`      Address: ${show(e.street)}, ${show(e.cityState)}  ·  Phone: ${show(e.phone)}`);
+                doc.text(`      Position: ${show(e.position)}`);
                 doc.text(`      Reason for leaving: ${show(e.reasonForLeaving)}`);
                 doc.text(
                     `      Subject to FMCSRs: ${yn(e.fmcsrSubject)}  ·  Safety-sensitive / DOT drug & alcohol testing: ${yn(e.safetySensitive)}`
