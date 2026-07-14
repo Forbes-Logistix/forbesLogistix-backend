@@ -20,6 +20,10 @@ const APPLICATION_RECEIVER_EMAIL =
 const POSITIONS = {
     'flatbed-southeast': 'Flatbed — Southeast',
     'reefer-dallas': 'Reefer — Dallas',
+    // Owner-operators leased to our authority get driver-qualified with the
+    // SAME 391.21 application (their DQ file is ours); the Part 376 equipment
+    // lease is separate onboarding paperwork, not part of this form.
+    'owner-operator-flatbed': 'Owner-Operator — Flatbed (Southeast)',
 };
 
 // ---------- validation helpers ----------

@@ -18,6 +18,7 @@ const CARRIER = {
 const POSITION_LABELS = {
     'flatbed-southeast': 'Company Flatbed Driver — Southeast',
     'reefer-dallas': 'Company Reefer Driver — Dedicated Dallas Outbound',
+    'owner-operator-flatbed': 'Owner-Operator — Flatbed (Southeast)',
 };
 
 // Strip control characters; pdfkit renders anything else safely as text.
