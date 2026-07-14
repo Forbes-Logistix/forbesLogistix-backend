@@ -8,7 +8,7 @@ Express 5 API for [forbeslogistix.com](https://www.forbeslogistix.com), deployed
 |---|---|
 | `POST /api/contact` | General contact form (name, email, message + consent record) |
 | `POST /api/lead` | Driver Quick Apply lead (name, US phone, OTR years + TCPA consent record) |
-| `POST /api/send-pdf` | **Scaffolding** — kept for the planned full DOT application form; no frontend caller today |
+| `POST /api/send-pdf` | Full DOT driver qualification application (49 CFR 391.21) from the hidden `/application` page — validates, renders the PDF (incl. FCRA/PSP/drug-&-alcohol consent pages), emails to recruiting |
 | `GET /` | Health check — returns `Forbes Logistix Backend is Running` |
 
 All POST routes: JSON body (100 kb cap), per-IP rate limiting (5/10 min on contact + lead, 3/10 min on send-pdf), Cloudflare Turnstile verification (skipped only if `TURNSTILE_SECRET` is unset), honeypot fields, input validation, and generic error responses.
