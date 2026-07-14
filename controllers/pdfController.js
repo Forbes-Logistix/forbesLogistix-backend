@@ -142,6 +142,42 @@ exports.sendPDF = async (req, res) => {
             }
         }
 
+        // ---------- background-check consents ----------
+        // Each consent is a distinct signed artifact required BEFORE any check
+        // is ordered: E-SIGN electronic-records consent (49 CFR 390.32(d) /
+        // 15 U.S.C. 7001(c)), FCRA standalone disclosure + authorization
+        // (15 U.S.C. 1681b(b)(2)), the FMCSA-mandated PSP form (49 U.S.C.
+        // 31150(b)(2)), the drug & alcohol history release (49 CFR 40.25 /
+        // 391.23(e)/(f)), and the Clearinghouse query acknowledgment (the
+        // operative full-query consent happens INSIDE the Clearinghouse portal
+        // per 49 CFR 382.703(b) — the form can only acknowledge/instruct).
+        // Full texts live in utils/pdfGenerator.js and must stay in sync with
+        // the frontend's ApplicationClient.js.
+        const con = body.consents || {};
+        if (con.electronicRecords !== true) {
+            return bad(res, 'Please consent to electronic records and signatures.');
+        }
+        const fcra = con.fcra || {};
+        const fcraSignature = str(fcra.signature, 120);
+        if (fcra.authorized !== true || !fcraSignature) {
+            return bad(res, 'Please sign the background report authorization.');
+        }
+        const psp = con.psp || {};
+        const pspSignature = str(psp.signature, 120);
+        if (!pspSignature) return bad(res, 'Please sign the PSP disclosure and authorization.');
+        const da = con.drugAlcohol || {};
+        const daSignature = str(da.signature, 120);
+        if (!daSignature) return bad(res, 'Please sign the drug and alcohol history release.');
+        if (da.selfReport !== true && da.selfReport !== false) {
+            return bad(res, 'Please answer the drug and alcohol self-report question.');
+        }
+        if (da.selfReport === true && !str(da.selfReportExplanation, 600)) {
+            return bad(res, 'Please explain your self-report answer.');
+        }
+        if (con.clearinghouseAck !== true) {
+            return bad(res, 'Please acknowledge the Drug & Alcohol Clearinghouse query notice.');
+        }
+
         // ---------- certification ----------
         const cert = body.certification || {};
         const signature = str(cert.signature, 120);
@@ -165,6 +201,18 @@ exports.sendPDF = async (req, res) => {
             violations,
             employment,
             gapsExplanation: optStr(body.gapsExplanation, 600),
+            consents: {
+                electronicRecords: true,
+                fcra: { authorized: true, signature: fcraSignature, freeCopy: fcra.freeCopy === true },
+                psp: { signature: pspSignature },
+                drugAlcohol: {
+                    signature: daSignature,
+                    selfReport: da.selfReport,
+                    selfReportExplanation: optStr(da.selfReportExplanation, 600),
+                    limitedQuery: da.limitedQuery === true,
+                },
+                clearinghouseAck: true,
+            },
             certification: { signature, esignConsent: true },
             submittedAtISO,
             submittedAtCT,
@@ -183,10 +231,19 @@ exports.sendPDF = async (req, res) => {
                 `Phone: ${p.phone}\n` +
                 `Position: ${positionLabel}\n` +
                 `Submitted: ${submittedAtCT} (${submittedAtISO})\n\n` +
-                `The complete application is attached as a PDF. Reminder: the SSN is never collected ` +
-                `online — per 49 CFR 391.21(b) the APPLICANT must write and initial it on the printed ` +
-                `application (SSN block on page 1) before first dispatch. You can take it by phone for ` +
-                `your own records, but the driver's hand completes the document.`,
+                `Consents signed electronically (all printed in the attached PDF):\n` +
+                `- FCRA background report authorization${fcra.freeCopy === true ? ' — FREE COPY REQUESTED: send the driver a copy of any report you obtain' : ''}\n` +
+                `- PSP disclosure & authorization (FMCSA-mandated form)\n` +
+                `- Drug & alcohol history release — self-report answer: ${da.selfReport === true ? 'YES (see explanation in PDF — return-to-duty documentation required)' : 'No'}\n` +
+                `- Clearinghouse pre-employment query acknowledged${da.limitedQuery === true ? '; limited-query general consent also signed' : ''}\n\n` +
+                `Before running checks:\n` +
+                `1. SSN: never collected online. Take it by PHONE, write it in the OFFICE USE block on ` +
+                `page 1, and have the driver sign the re-certification line there before first dispatch.\n` +
+                `2. Clearinghouse: the full pre-employment query still needs the driver's electronic ` +
+                `consent INSIDE clearinghouse.fmcsa.dot.gov (their application signature cannot substitute).\n` +
+                `3. If a report leads you to reject: run the FCRA adverse-action steps (pre-adverse notice ` +
+                `with a copy of the report + CFPB rights summary, wait ~5 business days, then the final ` +
+                `notice). Your screening vendor can automate this.`,
             attachments: [
                 {
                     filename: `DOT-Application-${lastName}.pdf`,
