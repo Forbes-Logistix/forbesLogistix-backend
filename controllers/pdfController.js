@@ -56,8 +56,8 @@ const currentMonthIndex = () => {
     return d.getFullYear() * 12 + d.getMonth();
 };
 const MONTH_NAMES = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ];
 const monthLabel = (mi) => `${MONTH_NAMES[((mi % 12) + 12) % 12]} ${Math.floor(mi / 12)}`;
 
