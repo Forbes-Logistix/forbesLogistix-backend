@@ -31,7 +31,13 @@ const isStr = (v) => typeof v === 'string';
 const str = (v, max) => (isStr(v) && v.trim() !== '' && v.trim().length <= max ? v.trim() : null);
 const optStr = (v, max) => (v === undefined || v === null || v === '' ? '' : str(v, max));
 const isDateStr = (v) => isStr(v) && /^\d{4}-\d{2}-\d{2}$/.test(v);
-const isMonthStr = (v) => isStr(v) && (/^\d{4}-\d{2}$/.test(v) || /^present$/i.test(v));
+const isMonthStr = (v) => {
+    // Trim before testing — month inputs falling back to text (or restored
+    // drafts) can carry padding the frontend's monthIndex() tolerates.
+    if (!isStr(v)) return false;
+    const s = v.trim();
+    return /^\d{4}-\d{2}$/.test(s) || /^present$/i.test(s);
+};
 const isUsPhone = (raw) => {
     const digits = String(raw ?? '').replace(/\D/g, '');
     return digits.length === 10 || (digits.length === 11 && digits.startsWith('1'));
