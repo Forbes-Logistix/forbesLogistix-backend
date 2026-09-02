@@ -1,6 +1,6 @@
-// SCAFFOLDING: not currently called by any frontend form. See
-// controllers/pdfController.js for the full note. Reactivated when the
-// full DOT driver application form is built.
+// LIVE: called by the full DOT driver application at
+// forbeslogistix.com/application (activated 2026-07-14). See
+// controllers/pdfController.js for the full note.
 
 const express = require('express');
 const router = express.Router();

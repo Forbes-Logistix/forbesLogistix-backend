@@ -38,6 +38,86 @@ const isUsPhone = (raw) => {
 };
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// ---------- v4 employment-gap detection ----------
+// Mirrors forbes-frontend/app/lib/employmentHistory.js — change both or neither.
+const MONTH_KEY_RE = /^\d{4}-\d{2}$/;
+// mi("YYYY-MM") = year*12 + (month-1). Returns null for unparseable input.
+const monthIndexOf = (v) => {
+    if (!isStr(v) || !MONTH_KEY_RE.test(v.trim())) return null;
+    const s = v.trim();
+    const m = Number(s.slice(5, 7));
+    if (m < 1 || m > 12) return null;
+    return Number(s.slice(0, 4)) * 12 + (m - 1);
+};
+const monthKeyOf = (mi) =>
+    `${String(Math.floor(mi / 12)).padStart(4, '0')}-${String((mi % 12) + 1).padStart(2, '0')}`;
+const currentMonthIndex = () => {
+    const d = new Date();
+    return d.getFullYear() * 12 + d.getMonth();
+};
+const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+];
+const monthLabel = (mi) => `${MONTH_NAMES[((mi % 12) + 12) % 12]} ${Math.floor(mi / 12)}`;
+
+// Returns [{ from, to }] (YYYY-MM keys, from = first missing month, to = last)
+// for every employment gap that needs an explanation:
+//   - entries become month intervals; current === true (or to === "Present")
+//     ends at the current month; unparseable entries are ignored
+//   - intervals are sorted and merged when overlapping or adjacent
+//     (concurrent/back-to-back jobs are not gaps)
+//   - a gap between merged intervals counts only when it spans >= 2 whole
+//     missing months (a single missing month is tolerated, matching the FMCSA
+//     sample form's "in excess of one month")
+//   - a trailing gap counts when the latest interval ends more than 1 month
+//     before the current month (latestEnd+1 .. currentMonth)
+//   - gaps are clipped to the 10-year (120-month) window: dropped when they
+//     end before it, start-truncated when they begin before it; anything
+//     before the earliest listed employment is not a gap (covered by the
+//     historyComplete attestation instead)
+function computeEmploymentGaps(employment, nowMi) {
+    const intervals = [];
+    for (const e of employment) {
+        const start = monthIndexOf(e.from);
+        if (start === null) continue;
+        const isCurrent = e.current === true || /^present$/i.test(String(e.to ?? '').trim());
+        const end = isCurrent ? nowMi : monthIndexOf(e.to);
+        if (end === null || end < start) continue;
+        intervals.push([start, end]);
+    }
+    if (!intervals.length) return [];
+    intervals.sort((a, b) => a[0] - b[0]);
+    const merged = [intervals[0].slice()];
+    for (let i = 1; i < intervals.length; i++) {
+        const prev = merged[merged.length - 1];
+        const cur = intervals[i];
+        if (cur[0] <= prev[1] + 1) {
+            if (cur[1] > prev[1]) prev[1] = cur[1];
+        } else {
+            merged.push(cur.slice());
+        }
+    }
+    const windowStart = nowMi - 120;
+    const gaps = [];
+    const pushGap = (gapFrom, gapTo) => {
+        if (gapTo - gapFrom + 1 < 2) return; // single missing month tolerated
+        if (gapTo < windowStart) return; // ends before the 10-year window
+        gaps.push({ from: monthKeyOf(Math.max(gapFrom, windowStart)), to: monthKeyOf(gapTo) });
+    };
+    for (let i = 1; i < merged.length; i++) {
+        pushGap(merged[i - 1][1] + 1, merged[i][0] - 1);
+    }
+    const latestEnd = merged[merged.length - 1][1];
+    if (nowMi - latestEnd > 1) {
+        pushGap(latestEnd + 1, nowMi);
+    }
+    return gaps;
+}
+
+// Exposed for the gap-algorithm parity tests only; not used by any route.
+exports._employmentGapInternals = { monthIndexOf, monthKeyOf, computeEmploymentGaps };
+
 function bad(res, message) {
     return res.status(400).json({ message });
 }
@@ -58,6 +138,13 @@ exports.sendPDF = async (req, res) => {
         if (!verify.ok) {
             return bad(res, 'Verification failed. Please try again.');
         }
+
+        // formVersion 4 added the DOT-completeness fields (per-employer
+        // city/state/zip/phone, self-employment + C/TPA, structured gap
+        // explanations, the history-complete attestation, required miles).
+        // Older payloads (no formVersion) keep the legacy rules exactly, so a
+        // driver mid-application on a cached bundle is not stranded.
+        const isV4 = Number(body.formVersion) >= 4;
 
         // ---------- position ----------
         const positionLabel = POSITIONS[body.position];
@@ -106,7 +193,20 @@ exports.sendPDF = async (req, res) => {
         const experience = Array.isArray(body.experience) ? body.experience.slice(0, 8) : [];
         if (!experience.length) return bad(res, 'At least one driving-experience entry is required.');
         for (const e of experience) {
-            if (!str(e.equipmentType, 80) || !str(String(e.years ?? ''), 10)) {
+            if (isV4) {
+                // approxMiles: digits (commas allowed), > 0, raw length <= 12.
+                const rawMiles = String(e.approxMiles ?? '').trim();
+                const milesDigits = rawMiles.replace(/,/g, '');
+                if (
+                    !str(e.equipmentType, 80) ||
+                    !str(String(e.years ?? ''), 10) ||
+                    rawMiles.length > 12 ||
+                    !/^\d+$/.test(milesDigits) ||
+                    !(Number(milesDigits) > 0)
+                ) {
+                    return bad(res, 'Each experience entry needs an equipment type, years, and approximate miles.');
+                }
+            } else if (!str(e.equipmentType, 80) || !str(String(e.years ?? ''), 10)) {
                 return bad(res, 'Each experience entry needs an equipment type and years.');
             }
         }
@@ -131,14 +231,89 @@ exports.sendPDF = async (req, res) => {
         for (const e of employment) {
             // 391.21(b)(10)(i)/(b)(11) require employer name AND address —
             // street is required, not just city/state.
-            if (
-                !str(e.employer, 150) ||
-                !str(e.street, 200) ||
-                !isMonthStr(e.from) ||
-                !isMonthStr(e.to) ||
-                !str(e.reasonForLeaving, 300)
-            ) {
+            const baseOk =
+                str(e.employer, 150) &&
+                str(e.street, 200) &&
+                isMonthStr(e.from) &&
+                isMonthStr(e.to) &&
+                str(e.reasonForLeaving, 300);
+            if (isV4) {
+                // v4 splits the address into city/state/zip and makes the
+                // employer phone mandatory (391.23 investigations need it).
+                if (
+                    !baseOk ||
+                    !str(e.city, 100) ||
+                    !str(e.state, 40) ||
+                    !str(e.zip, 12) ||
+                    !isUsPhone(e.phone)
+                ) {
+                    return bad(res, 'Each employer needs a name, street address, city, state, ZIP, phone, from/to dates, and a reason for leaving.');
+                }
+                // Self-employed + DOT-testing periods: the random-pool
+                // consortium/TPA stands in as the "previous employer" for the
+                // drug & alcohol history check.
+                if (e.selfEmployed === true && e.safetySensitive === true && !str(e.tpaName, 150)) {
+                    return bad(res, 'Self-employed entries with DOT drug & alcohol testing need the consortium/TPA that ran your random testing pool.');
+                }
+                if (optStr(e.usdotNumber, 20) === null) {
+                    return bad(res, 'USDOT number must be 20 characters or fewer.');
+                }
+            } else if (!baseOk) {
                 return bad(res, 'Each employer needs a name, street address, from/to dates, and a reason for leaving.');
+            }
+        }
+
+        // ---------- v4 employment completeness ----------
+        let employmentGaps = [];
+        if (isV4) {
+            const nowMi = currentMonthIndex();
+
+            // Gap mirror: recompute the gaps the frontend must have shown and
+            // require a valid explanation for every one of them. Extra
+            // provided gaps beyond the computed set are kept for the PDF but
+            // not required.
+            const providedGaps = Array.isArray(body.employmentGaps) ? body.employmentGaps.slice(0, 24) : [];
+            for (const g of providedGaps) {
+                if (!g || typeof g !== 'object') continue;
+                const from = isStr(g.from) && MONTH_KEY_RE.test(g.from.trim()) ? g.from.trim() : null;
+                const to = isStr(g.to) && MONTH_KEY_RE.test(g.to.trim()) ? g.to.trim() : null;
+                const explanation = str(g.explanation, 300);
+                if (from && to && explanation) {
+                    employmentGaps.push({ from, to, explanation });
+                }
+            }
+            const providedKeys = new Set(employmentGaps.map((g) => `${g.from}|${g.to}`));
+            for (const g of computeEmploymentGaps(employment, nowMi)) {
+                if (!providedKeys.has(`${g.from}|${g.to}`)) {
+                    return bad(res, 'Please explain the employment gap(s) shown on the Employment step.');
+                }
+            }
+
+            // Experience-vs-history cross-check: more claimed driving years
+            // than the history covers (with <10 years listed) means CMV jobs
+            // are missing from the 10-year employment history.
+            let earliestFrom = null;
+            for (const e of employment) {
+                const mi = monthIndexOf(e.from);
+                if (mi !== null && (earliestFrom === null || mi < earliestFrom)) earliestFrom = mi;
+            }
+            if (earliestFrom !== null) {
+                const coverageYears = (nowMi - earliestFrom) / 12;
+                let maxYears = null;
+                for (const e of experience) {
+                    const y = parseFloat(String(e.years).replace(/[^0-9.]/g, ''));
+                    if (!Number.isNaN(y) && (maxYears === null || y > maxYears)) maxYears = y;
+                }
+                if (coverageYears < 10 && maxYears !== null && maxYears > coverageYears + 1) {
+                    return bad(
+                        res,
+                        `Your Driving Experience lists ${maxYears} years, but your employment history only goes back to ${monthLabel(earliestFrom)}. Add the earlier driving jobs, or correct the years on the Driving Experience step.`
+                    );
+                }
+            }
+
+            if (body.historyComplete !== true) {
+                return bad(res, 'Please confirm your employment history is complete.');
             }
         }
 
@@ -200,6 +375,10 @@ exports.sendPDF = async (req, res) => {
             accidents,
             violations,
             employment,
+            employmentGaps,
+            historyComplete: body.historyComplete === true,
+            // Legacy free-text gaps field (formVersion < 4); rendered only
+            // when no structured employmentGaps are present.
             gapsExplanation: optStr(body.gapsExplanation, 600),
             consents: {
                 electronicRecords: true,
