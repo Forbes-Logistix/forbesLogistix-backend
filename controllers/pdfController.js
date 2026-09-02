@@ -238,8 +238,7 @@ exports.sendPDF = async (req, res) => {
                 isMonthStr(e.to) &&
                 str(e.reasonForLeaving, 300);
             if (isV4) {
-                // v4 splits the address into city/state/zip and makes the
-                // employer phone mandatory (391.23 investigations need it).
+                // v4 splits the address into city/state/zip and makes the employer phone mandatory — a carrier addition under 391.21(c) (matches FMCSA's model form; used in practice to run 391.23 investigations), not a reg-mandated field.
                 if (
                     !baseOk ||
                     !str(e.city, 100) ||
@@ -249,11 +248,25 @@ exports.sendPDF = async (req, res) => {
                 ) {
                     return bad(res, 'Each employer needs a name, street address, city, state, ZIP, phone, from/to dates, and a reason for leaving.');
                 }
+                // v4 date sanity: From must be a real YYYY-MM ("Present" is
+                // only valid for To), and a month-valued To cannot precede
+                // From. Legacy payloads keep the looser isMonthStr rule.
+                const fromMi = monthIndexOf(e.from);
+                const toIsPresent = /^present$/i.test(String(e.to).trim());
+                const toMi = toIsPresent ? null : monthIndexOf(e.to);
+                if (fromMi === null || (!toIsPresent && (toMi === null || toMi < fromMi))) {
+                    return bad(res, "Each employer's dates must be real months, and From must come before To.");
+                }
                 // Self-employed + DOT-testing periods: the random-pool
                 // consortium/TPA stands in as the "previous employer" for the
                 // drug & alcohol history check.
                 if (e.selfEmployed === true && e.safetySensitive === true && !str(e.tpaName, 150)) {
                     return bad(res, 'Self-employed entries with DOT drug & alcohol testing need the consortium/TPA that ran your random testing pool.');
+                }
+                // tpaName renders on the PDF whenever selfEmployed is true
+                // (even without DOT testing), so cap its length unconditionally.
+                if (optStr(e.tpaName, 150) === null) {
+                    return bad(res, 'Consortium/TPA name must be 150 characters or fewer.');
                 }
                 if (optStr(e.usdotNumber, 20) === null) {
                     return bad(res, 'USDOT number must be 20 characters or fewer.');
@@ -275,18 +288,24 @@ exports.sendPDF = async (req, res) => {
             const providedGaps = Array.isArray(body.employmentGaps) ? body.employmentGaps.slice(0, 24) : [];
             for (const g of providedGaps) {
                 if (!g || typeof g !== 'object') continue;
-                const from = isStr(g.from) && MONTH_KEY_RE.test(g.from.trim()) ? g.from.trim() : null;
-                const to = isStr(g.to) && MONTH_KEY_RE.test(g.to.trim()) ? g.to.trim() : null;
+                const from = monthIndexOf(g.from) !== null ? g.from.trim() : null;
+                const to = monthIndexOf(g.to) !== null ? g.to.trim() : null;
                 const explanation = str(g.explanation, 300);
                 if (from && to && explanation) {
                     employmentGaps.push({ from, to, explanation });
                 }
             }
             const providedKeys = new Set(employmentGaps.map((g) => `${g.from}|${g.to}`));
-            for (const g of computeEmploymentGaps(employment, nowMi)) {
-                if (!providedKeys.has(`${g.from}|${g.to}`)) {
-                    return bad(res, 'Please explain the employment gap(s) shown on the Employment step.');
-                }
+            // One-month client-clock tolerance: the frontend computed its gap
+            // set against the DRIVER's local month, and near a month boundary
+            // the server's UTC month runs a few hours ahead of a US-timezone
+            // driver's. Accept the payload when it fully covers the gap set
+            // for either the server's current month or the previous one;
+            // reject only when both sets are uncovered.
+            const coversGapsFor = (mi) =>
+                computeEmploymentGaps(employment, mi).every((g) => providedKeys.has(`${g.from}|${g.to}`));
+            if (!coversGapsFor(nowMi) && !coversGapsFor(nowMi - 1)) {
+                return bad(res, 'Please explain the employment gap(s) shown on the Employment step.');
             }
 
             // Experience-vs-history cross-check: more claimed driving years
@@ -302,7 +321,9 @@ exports.sendPDF = async (req, res) => {
                 let maxYears = null;
                 for (const e of experience) {
                     const y = parseFloat(String(e.years).replace(/[^0-9.]/g, ''));
-                    if (!Number.isNaN(y) && (maxYears === null || y > maxYears)) maxYears = y;
+                    // Values over 60 aren't a plausible years figure (likely a
+                    // year like "2015" or a mileage) — treat as unparseable.
+                    if (!Number.isNaN(y) && y <= 60 && (maxYears === null || y > maxYears)) maxYears = y;
                 }
                 if (coverageYears < 10 && maxYears !== null && maxYears > coverageYears + 1) {
                     return bad(

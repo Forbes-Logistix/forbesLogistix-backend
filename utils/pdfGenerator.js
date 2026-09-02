@@ -259,7 +259,7 @@ module.exports = function generatePDF(app) {
                 const earliestLabel = fromKeys.length ? fmtMonth(fromKeys[0]) : null;
                 doc.moveDown(0.2);
                 doc.text(
-                    `Applicant certified: all employers listed for the past 3 years (driving or not) and all CMV-driving positions for the past 10 years${earliestLabel ? `; no CMV operation before ${earliestLabel}` : ''}.`
+                    `Applicant certified: all employers listed for the past 3 years (driving or not), all CMV-driving positions for the past 10 years, and no other CMV operation within the past 10 years${earliestLabel ? ` (earliest employment listed: ${earliestLabel})` : ''}.`
                 );
             }
 
