@@ -40,6 +40,15 @@ const clean = (v) =>
 const show = (v) => (clean(v) === '' ? '—' : clean(v));
 const yn = (v) => (v === true ? 'Yes' : v === false ? 'No' : '—');
 
+// "YYYY-MM" → "Mar 2022" (falls back to the raw value if unparseable).
+const MONTHS_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtMonth = (v) => {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(v ?? '').trim());
+    if (!m) return show(v);
+    const i = Number(m[2]) - 1;
+    return i >= 0 && i <= 11 ? `${MONTHS_ABBR[i]} ${m[1]}` : show(v);
+};
+
 module.exports = function generatePDF(app) {
     return new Promise((resolve, reject) => {
         try {
@@ -210,16 +219,48 @@ module.exports = function generatePDF(app) {
             emp.forEach((e, i) => {
                 doc.font('Helvetica-Bold').text(`  ${i + 1}. ${show(e.employer)}  (${show(e.from)} – ${show(e.to)})`);
                 doc.font('Helvetica');
-                doc.text(`      Address: ${show(e.street)}, ${show(e.cityState)}  ·  Phone: ${show(e.phone)}`);
+                if (clean(e.city) || clean(e.state) || clean(e.zip)) {
+                    // formVersion >= 4: discrete city/state/zip fields.
+                    doc.text(`      Address: ${show(e.street)}, ${show(e.city)}, ${show(e.state)} ${show(e.zip)}  ·  Phone: ${show(e.phone)}`);
+                } else {
+                    // Legacy payloads sent a combined cityState field.
+                    doc.text(`      Address: ${show(e.street)}, ${show(e.cityState)}  ·  Phone: ${show(e.phone)}`);
+                }
                 doc.text(`      Position: ${show(e.position)}`);
                 doc.text(`      Reason for leaving: ${show(e.reasonForLeaving)}`);
                 doc.text(
                     `      Subject to FMCSRs: ${yn(e.fmcsrSubject)}  ·  Safety-sensitive / DOT drug & alcohol testing: ${yn(e.safetySensitive)}`
                 );
+                if (e.selfEmployed === true) {
+                    doc.text(
+                        `      Self-employed (own company${clean(e.usdotNumber) ? `, USDOT ${clean(e.usdotNumber)}` : ''})  ·  Random-pool C/TPA: ${show(e.tpaName)}`
+                    );
+                }
                 doc.moveDown(0.3);
             });
-            if (clean(app.gapsExplanation)) {
+            const empGaps = Array.isArray(app.employmentGaps) ? app.employmentGaps : [];
+            if (empGaps.length) {
+                doc.font('Helvetica-Bold').text('Employment gaps explained:');
+                doc.font('Helvetica');
+                empGaps.forEach((g, i) => {
+                    doc.text(`  ${i + 1}. ${fmtMonth(g.from)} – ${fmtMonth(g.to)}: ${show(g.explanation)}`);
+                });
+                doc.moveDown(0.3);
+            } else if (clean(app.gapsExplanation)) {
                 field('Employment gaps explained', app.gapsExplanation);
+            }
+            if (app.historyComplete === true) {
+                // Attestation checkbox text lives in the frontend's
+                // Employment step; this line records that it was checked.
+                const fromKeys = emp
+                    .map((e) => String(e.from ?? '').trim())
+                    .filter((v) => /^\d{4}-(0[1-9]|1[0-2])$/.test(v))
+                    .sort();
+                const earliestLabel = fromKeys.length ? fmtMonth(fromKeys[0]) : null;
+                doc.moveDown(0.2);
+                doc.text(
+                    `Applicant certified: all employers listed for the past 3 years (driving or not), all CMV-driving positions for the past 10 years, and no other CMV operation within the past 10 years${earliestLabel ? ` (earliest employment listed: ${earliestLabel})` : ''}.`
+                );
             }
 
             // ---------- Certification ----------
