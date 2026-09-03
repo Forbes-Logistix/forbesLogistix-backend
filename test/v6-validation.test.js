@@ -271,6 +271,132 @@ test('v6: a single missing residence month is tolerated', async () => {
     await expect200(body);
 });
 
+// ---------- previous-address cap (mirrored with the frontend: 12) ----------
+
+test('v6: a 7-address contiguous history passes (cap is 12, not 6)', async () => {
+    const body = makeV6Body();
+    body.personal.currentAddress.since = ym(-3);
+    const mk = (from, to) => ({
+        street: '480 Delta Row', city: 'Greenville', state: 'MS', zip: '38701', from, to,
+    });
+    // Seven contiguous previous addresses reaching back past the 36-month
+    // window. Under the old slice(0, 6) the earliest one was silently
+    // dropped, opening a coverage gap and blocking a UI-valid payload.
+    body.personal.previousAddresses = [
+        mk(ym(-8), ym(-4)),
+        mk(ym(-13), ym(-9)),
+        mk(ym(-18), ym(-14)),
+        mk(ym(-23), ym(-19)),
+        mk(ym(-28), ym(-24)),
+        mk(ym(-33), ym(-29)),
+        mk(ym(-40), ym(-34)),
+    ];
+    await expect200(body);
+});
+
+// ---------- future residence months ----------
+
+test('v6: current-address "since" in the future blocks with the exact shared sentence', async () => {
+    const body = makeV6Body();
+    body.personal.currentAddress.since = ym(2);
+    const res = await expect400(body);
+    assert.strictEqual(res.body.message, "Address dates can't be in the future.");
+});
+
+test('v6: one month ahead is tolerated (client-clock skew)', async () => {
+    const body = makeV6Body();
+    body.personal.currentAddress.since = ym(1);
+    body.personal.previousAddresses = [
+        { street: '480 Delta Row', city: 'Greenville', state: 'MS', zip: '38701', from: ym(-40), to: ym(0) },
+    ];
+    await expect200(body);
+});
+
+test('v6: a future previous-address month blocks with the exact shared sentence', async () => {
+    const body = makeV6Body();
+    body.personal.previousAddresses = [
+        { street: '480 Delta Row', city: 'Greenville', state: 'MS', zip: '38701', from: ym(-10), to: ym(2) },
+    ];
+    const res = await expect400(body);
+    assert.strictEqual(res.body.message, "Address dates can't be in the future.");
+});
+
+// ---------- inverted previous-address range (server-only backstop) ----------
+
+test('v6: previous address with To before From blocks', async () => {
+    const body = makeV6Body();
+    body.personal.previousAddresses = [
+        { street: '480 Delta Row', city: 'Greenville', state: 'MS', zip: '38701', from: ym(-11), to: ym(-20) },
+    ];
+    const res = await expect400(body);
+    assert.strictEqual(res.body.message, 'Each address needs real months, and From must come before To.');
+});
+
+// ---------- office JSON whitelist ----------
+
+test('JSON attachment contains only whitelisted keys — junk payload keys are dropped', async () => {
+    const body = makeV6Body();
+    body.evilTop = 'x';
+    body.personal.junk = 'x';
+    body.personal.currentAddress.hax = 'x';
+    body.personal.previousAddresses = [
+        { street: '480 Delta Row', city: 'Greenville', state: 'MS', zip: '38701', from: ym(-45), to: ym(-41), junk: 'x' },
+    ];
+    body.license.evil = 'x';
+    body.additionalLicenses = [
+        { state: 'TN', number: 'TN123', class: 'A', expiration: '2027-01-15', dropTable: 'x' },
+    ];
+    body.experience[0].junk = 'x';
+    body.accidents = [
+        { date: '2024-11-02', description: 'Backed into dock', fatalities: '0', injuries: '0', sneaky: 'x' },
+    ];
+    body.violations = [
+        { date: '2023-06-01', offense: 'Speeding 10 over', state: 'MS', penalty: '$150', sneaky: 'x' },
+    ];
+    body.employment[0].sneaky = 'x';
+
+    const before = sentMails.length;
+    await expect200(body);
+    assert.strictEqual(sentMails.length, before + 1);
+    const mail = sentMails[sentMails.length - 1];
+    const parsed = JSON.parse(mail.attachments[1].content.toString('utf8'));
+
+    assert.deepStrictEqual(
+        Object.keys(parsed).sort(),
+        [
+            'accidents', 'additionalLicenses', 'certification', 'consents',
+            'employment', 'employmentGaps', 'experience', 'formVersion',
+            'gapsExplanation', 'historyComplete', 'license', 'personal',
+            'position', 'submittedAtCT', 'submittedAtISO', 'submitterIp',
+            'violations',
+        ]
+    );
+    assert.deepStrictEqual(
+        Object.keys(parsed.personal).sort(),
+        ['currentAddress', 'dob', 'email', 'firstName', 'fullName', 'lastName',
+            'middleName', 'noMiddleName', 'phone', 'previousAddresses'].sort()
+    );
+    assert.deepStrictEqual(
+        Object.keys(parsed.personal.currentAddress).sort(),
+        ['city', 'since', 'state', 'street', 'zip']
+    );
+    assert.deepStrictEqual(
+        Object.keys(parsed.personal.previousAddresses[0]).sort(),
+        ['city', 'from', 'state', 'street', 'to', 'zip']
+    );
+    assert.strictEqual('evil' in parsed.license, false);
+    assert.deepStrictEqual(parsed.license.endorsementCodes, ['H', 'X']);
+    assert.strictEqual(parsed.license.restrictions, 'None');
+    assert.strictEqual('dropTable' in parsed.additionalLicenses[0], false);
+    assert.strictEqual('junk' in parsed.experience[0], false);
+    assert.strictEqual('sneaky' in parsed.accidents[0], false);
+    assert.strictEqual('sneaky' in parsed.violations[0], false);
+    assert.strictEqual('sneaky' in parsed.employment[0], false);
+    // Known employment keys still ride along.
+    assert.strictEqual(parsed.employment[0].employer, 'Southern Steel Transport');
+    assert.strictEqual(parsed.employment[0].position, 'Flatbed driver');
+});
+
 // ---------- v4 cross-check still enforced on v6 ----------
 
 test('v6: experience-vs-history cross-check still fires', async () => {

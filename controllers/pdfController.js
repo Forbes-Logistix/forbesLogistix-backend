@@ -194,6 +194,40 @@ exports._employmentGapInternals = {
     computeResidenceGaps,
 };
 
+// ---------- office JSON whitelist ----------
+// The office-facing JSON attachment is assembled ONLY from these known,
+// validated keys — never by spreading raw request sub-objects — so junk or
+// unexpected keys in a payload can never ride along to the office inbox.
+// The key lists cover every field the PDF generator reads (all form
+// versions), so the office can still regenerate the PDF from the JSON.
+const pickKnown = (src, keys) => {
+    const out = {};
+    if (!src || typeof src !== 'object') return out;
+    for (const k of keys) {
+        if (src[k] !== undefined) out[k] = src[k];
+    }
+    return out;
+};
+const CURRENT_ADDRESS_KEYS = ['street', 'city', 'state', 'zip', 'since', 'sinceYear'];
+const PREV_ADDRESS_KEYS = ['street', 'city', 'state', 'zip', 'from', 'to'];
+const LICENSE_KEYS = [
+    'state', 'number', 'class', 'expiration', 'endorsements', 'endorsementCodes',
+    'restrictions', 'everDeniedRevokedSuspended', 'deniedExplanation',
+];
+const ADDITIONAL_LICENSE_KEYS = ['state', 'number', 'class', 'expiration'];
+const EXPERIENCE_KEYS = ['equipmentType', 'years', 'approxMiles'];
+const ACCIDENT_KEYS = ['date', 'description', 'fatalities', 'injuries'];
+const VIOLATION_KEYS = ['date', 'offense', 'state', 'penalty'];
+// Every employment key across legacy/v4/v5/v6 (cityState is the legacy
+// combined city/state field; usdotNumber/mcNumber/authorityStatus/tpaName/
+// tpaPhone/leasedDuringPeriod are the v4-v6 self-employment block).
+const EMPLOYMENT_KEYS = [
+    'employer', 'street', 'cityState', 'city', 'state', 'zip', 'phone',
+    'from', 'to', 'current', 'position', 'reasonForLeaving', 'fmcsrSubject',
+    'safetySensitive', 'selfEmployed', 'usdotNumber', 'mcNumber',
+    'authorityStatus', 'tpaName', 'tpaPhone', 'leasedDuringPeriod',
+];
+
 function bad(res, message) {
     return res.status(400).json({ message });
 }
@@ -276,7 +310,10 @@ exports.sendPDF = async (req, res) => {
         if (!str(ca.street, 200) || !str(ca.city, 100) || !str(ca.state, 40) || !str(ca.zip, 12)) {
             return bad(res, 'Complete current address is required.');
         }
-        const prevAddresses = Array.isArray(p.previousAddresses) ? p.previousAddresses.slice(0, 6) : [];
+        // Cap mirrored with the frontend's Add-address button (max 12 on both
+        // sides — change both or neither), so a UI-valid list is never
+        // silently truncated here.
+        const prevAddresses = Array.isArray(p.previousAddresses) ? p.previousAddresses.slice(0, 12) : [];
         for (const a of prevAddresses) {
             if (!str(a.street, 200) || !str(a.city, 100) || !str(a.state, 40) || !str(a.zip, 12)) {
                 return bad(res, 'Each previous address must be complete.');
@@ -290,9 +327,25 @@ exports.sendPDF = async (req, res) => {
             if (monthIndexOf(ca.since) === null) {
                 return bad(res, 'The month you moved to your current address is required.');
             }
+            // Future months: one month ahead is tolerated (same client-clock
+            // skew allowance as the gap/coverage mirrors); anything beyond
+            // that is rejected. The blocking sentence must stay byte-identical
+            // to the frontend's — change both or neither.
+            const futureMiLimit = currentMonthIndex() + 1;
+            if (monthIndexOf(ca.since) > futureMiLimit) {
+                return bad(res, "Address dates can't be in the future.");
+            }
             for (const a of prevAddresses) {
                 if (monthIndexOf(a.from) === null || monthIndexOf(a.to) === null) {
                     return bad(res, 'Each previous address needs the months you lived there (from and to).');
+                }
+                if (monthIndexOf(a.from) > futureMiLimit || monthIndexOf(a.to) > futureMiLimit) {
+                    return bad(res, "Address dates can't be in the future.");
+                }
+                // Server-only backstop (the frontend already blocks inverted
+                // ranges before submit): To must not precede From.
+                if (monthIndexOf(a.to) < monthIndexOf(a.from)) {
+                    return bad(res, 'Each address needs real months, and From must come before To.');
                 }
             }
             // Coverage mirror (same one-month client-clock tolerance as the
@@ -642,12 +695,40 @@ exports.sendPDF = async (req, res) => {
 
         const pdfBuffer = await pdfGenerator(application);
 
-        // Office-facing JSON twin of the PDF (ALL form versions): the
-        // validated/assembled application object, pretty-printed, so the
-        // office can regenerate the PDF or export to the background-check
-        // vendor. The assembled object never contains the turnstile token,
-        // honeypot, or raw request internals.
-        const applicationJson = Buffer.from(JSON.stringify(application, null, 2), 'utf8');
+        // Office-facing JSON twin of the PDF (ALL form versions),
+        // pretty-printed so the office can regenerate the PDF or export to
+        // the background-check vendor. Assembled from an explicit whitelist
+        // of validated fields per section — never by spreading raw request
+        // sub-objects — so it can never contain the turnstile token, the
+        // honeypot, raw request internals, or any unexpected payload keys.
+        const officeApplication = {
+            formVersion: application.formVersion,
+            position: body.position,
+            personal: {
+                ...(isV5 ? { firstName, middleName, lastName, noMiddleName } : {}),
+                fullName,
+                phone: p.phone,
+                email,
+                dob: p.dob,
+                currentAddress: pickKnown(ca, CURRENT_ADDRESS_KEYS),
+                previousAddresses: prevAddresses.map((a) => pickKnown(a, PREV_ADDRESS_KEYS)),
+            },
+            license: pickKnown(lic, LICENSE_KEYS),
+            additionalLicenses: additionalLicenses.map((l) => pickKnown(l, ADDITIONAL_LICENSE_KEYS)),
+            experience: experience.map((e) => pickKnown(e, EXPERIENCE_KEYS)),
+            accidents: accidents.map((a) => pickKnown(a, ACCIDENT_KEYS)),
+            violations: violations.map((v) => pickKnown(v, VIOLATION_KEYS)),
+            employment: employment.map((e) => pickKnown(e, EMPLOYMENT_KEYS)),
+            employmentGaps,
+            historyComplete: application.historyComplete,
+            gapsExplanation: application.gapsExplanation,
+            consents: application.consents,
+            certification: application.certification,
+            submittedAtISO,
+            submittedAtCT,
+            submitterIp,
+        };
+        const applicationJson = Buffer.from(JSON.stringify(officeApplication, null, 2), 'utf8');
 
         // v5 has the real last name; v4/legacy fall back to the last token of
         // the free-text full name, exactly as before.
