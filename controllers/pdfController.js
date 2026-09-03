@@ -62,8 +62,8 @@ const currentMonthIndex = () => {
     return d.getFullYear() * 12 + d.getMonth();
 };
 const MONTH_NAMES = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
 ];
 const monthLabel = (mi) => `${MONTH_NAMES[((mi % 12) + 12) % 12]} ${Math.floor(mi / 12)}`;
 
@@ -151,6 +151,12 @@ exports.sendPDF = async (req, res) => {
         // Older payloads (no formVersion) keep the legacy rules exactly, so a
         // driver mid-application on a cached bundle is not stranded.
         const isV4 = Number(body.formVersion) >= 4;
+        // formVersion 5 replaced the single free-text full name with
+        // structured first/middle/last fields (plus a no-middle-name
+        // attestation); fullName is derived server-side from the parts.
+        // v4 payloads (cached bundles from the v4 release day) and legacy
+        // payloads keep the fullName field and today's rules exactly.
+        const isV5 = Number(body.formVersion) >= 5;
 
         // ---------- position ----------
         const positionLabel = POSITIONS[body.position];
@@ -158,8 +164,35 @@ exports.sendPDF = async (req, res) => {
 
         // ---------- personal ----------
         const p = body.personal || {};
-        const fullName = str(p.fullName, 120);
-        if (!fullName) return bad(res, 'Full legal name is required.');
+        let fullName;
+        let firstName = '';
+        let middleName = '';
+        let lastName = '';
+        let noMiddleName = false;
+        if (isV5) {
+            firstName = str(p.firstName, 60);
+            lastName = str(p.lastName, 60);
+            if (!firstName || !lastName) return bad(res, 'First and last name are required.');
+            noMiddleName = p.noMiddleName === true;
+            if (noMiddleName) {
+                // The UI clears and disables the middle-name field when the
+                // box is checked; a populated value here means the payload is
+                // inconsistent, not that the driver has a middle name.
+                if (String(p.middleName ?? '').trim() !== '') {
+                    return bad(res, 'Middle name must be left blank when you confirm you have no middle name.');
+                }
+                middleName = '';
+            } else {
+                middleName = str(p.middleName, 60);
+                if (!middleName) {
+                    return bad(res, 'Middle name is required — or confirm you have no middle name.');
+                }
+            }
+            fullName = [firstName, middleName, lastName].filter(Boolean).join(' ');
+        } else {
+            fullName = str(p.fullName, 120);
+            if (!fullName) return bad(res, 'Full legal name is required.');
+        }
         if (!isUsPhone(p.phone)) return bad(res, 'A valid US phone number is required.');
         const email = optStr(p.email, 254);
         if (email && !EMAIL_REGEX.test(email)) return bad(res, 'Email address is invalid.');
@@ -394,8 +427,14 @@ exports.sendPDF = async (req, res) => {
         const submitterIp = req.ip || 'unknown';
 
         const application = {
+            // The generator keys human-facing date formatting (and the
+            // no-middle-name annotation) off formVersion >= 5; v4/legacy
+            // renders stay byte-identical to what shipped before.
+            formVersion: Number(body.formVersion) || 0,
             position: body.position,
-            personal: { ...p, fullName, email, previousAddresses: prevAddresses },
+            personal: isV5
+                ? { ...p, firstName, middleName, lastName, noMiddleName, fullName, email, previousAddresses: prevAddresses }
+                : { ...p, fullName, email, previousAddresses: prevAddresses },
             license: lic,
             additionalLicenses,
             experience,
@@ -427,7 +466,10 @@ exports.sendPDF = async (req, res) => {
 
         const pdfBuffer = await pdfGenerator(application);
 
-        const lastName = fullName.split(/\s+/).pop().replace(/[^A-Za-z0-9-]/g, '') || 'Driver';
+        // v5 has the real last name; v4/legacy fall back to the last token of
+        // the free-text full name, exactly as before.
+        const fileLastName =
+            (isV5 ? lastName : fullName.split(/\s+/).pop()).replace(/[^A-Za-z0-9-]/g, '') || 'Driver';
         await sendViaGraph({
             to: APPLICATION_RECEIVER_EMAIL,
             subject: `DOT Driver Application — ${positionLabel} — ${fullName}`,
@@ -452,7 +494,7 @@ exports.sendPDF = async (req, res) => {
                 `notice). Your screening vendor can automate this.`,
             attachments: [
                 {
-                    filename: `DOT-Application-${lastName}.pdf`,
+                    filename: `DOT-Application-${fileLastName}.pdf`,
                     content: pdfBuffer,
                     contentType: 'application/pdf',
                 },
