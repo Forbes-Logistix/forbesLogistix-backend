@@ -427,9 +427,12 @@ exports.sendPDF = async (req, res) => {
         const submitterIp = req.ip || 'unknown';
 
         const application = {
-            // The generator keys human-facing date formatting (and the
-            // no-middle-name annotation) off formVersion >= 5; v4/legacy
-            // renders stay byte-identical to what shipped before.
+            // The generator keys most human-facing date formatting (and the
+            // no-middle-name annotation) off formVersion >= 5. Legacy
+            // (no-version) renders are byte-identical to what shipped before;
+            // v4 renders differ ONLY in month-name spelling on gap lines and
+            // the attestation label (fmtMonth is full-month for all versions
+            // by design — spelled-out months everywhere).
             formVersion: Number(body.formVersion) || 0,
             position: body.position,
             personal: isV5

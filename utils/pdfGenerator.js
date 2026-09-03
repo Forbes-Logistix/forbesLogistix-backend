@@ -79,10 +79,12 @@ module.exports = function generatePDF(app) {
     return new Promise((resolve, reject) => {
         try {
             // formVersion >= 5 renders human-facing dates with spelled-out
-            // months and carries the structured-name annotation; v4 and
-            // legacy payloads render byte-identically to what shipped before
-            // (their gap/attestation month labels already flow through
-            // fmtMonth above). Machine-facing values are untouched.
+            // months and carries the structured-name annotation. Legacy
+            // (no-version) payloads render byte-identically to what shipped
+            // before; v4 payloads differ only in month-name spelling on gap
+            // lines and the attestation label, which flow through fmtMonth
+            // (full months for all versions, by design). Machine-facing
+            // values are untouched.
             const isV5 = Number(app.formVersion) >= 5;
 
             const doc = new PDFDocument({ size: 'LETTER', margin: 54 });
