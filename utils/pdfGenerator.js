@@ -40,18 +40,53 @@ const clean = (v) =>
 const show = (v) => (clean(v) === '' ? '—' : clean(v));
 const yn = (v) => (v === true ? 'Yes' : v === false ? 'No' : '—');
 
-// "YYYY-MM" → "Mar 2022" (falls back to the raw value if unparseable).
-const MONTHS_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// "YYYY-MM" → "March 2022" (falls back to the raw value if unparseable).
+// Full month names, in lockstep with the frontend's MONTH_NAMES — the
+// experience-vs-history 400 sentence must stay byte-identical between repos.
+const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+];
 const fmtMonth = (v) => {
     const m = /^(\d{4})-(\d{2})$/.exec(String(v ?? '').trim());
     if (!m) return show(v);
     const i = Number(m[2]) - 1;
-    return i >= 0 && i <= 11 ? `${MONTHS_ABBR[i]} ${m[1]}` : show(v);
+    return i >= 0 && i <= 11 ? `${MONTH_NAMES[i]} ${m[1]}` : show(v);
+};
+
+// "YYYY-MM-DD" → "March 4, 1988" (no leading zero on the day). Anything else
+// — including free-text dates — is passed through show() unchanged.
+const fmtFullDate = (v) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v ?? '').trim());
+    if (!m) return show(v);
+    const i = Number(m[2]) - 1;
+    const day = Number(m[3]);
+    if (i < 0 || i > 11 || day < 1 || day > 31) return show(v);
+    return `${MONTH_NAMES[i]} ${day}, ${m[1]}`;
+};
+
+// Accident/violation dates are free text; spell out only values that happen
+// to be an exact ISO date ("2024-03-07") or month ("2024-03") — everything
+// else renders raw, unchanged.
+const fmtLooseDate = (v) => {
+    const s = String(v ?? '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return fmtFullDate(s);
+    if (/^\d{4}-\d{2}$/.test(s)) return fmtMonth(s);
+    return show(v);
 };
 
 module.exports = function generatePDF(app) {
     return new Promise((resolve, reject) => {
         try {
+            // formVersion >= 5 renders human-facing dates with spelled-out
+            // months and carries the structured-name annotation. Legacy
+            // (no-version) payloads render byte-identically to what shipped
+            // before; v4 payloads differ only in month-name spelling on gap
+            // lines and the attestation label, which flow through fmtMonth
+            // (full months for all versions, by design). Machine-facing
+            // values are untouched.
+            const isV5 = Number(app.formVersion) >= 5;
+
             const doc = new PDFDocument({ size: 'LETTER', margin: 54 });
             const buffers = [];
             doc.on('data', buffers.push.bind(buffers));
@@ -99,10 +134,16 @@ module.exports = function generatePDF(app) {
             // ---------- Personal ----------
             const p = app.personal || {};
             section('Applicant');
-            field('Full legal name', p.fullName);
+            // v5: fullName is composed server-side from first/middle/last;
+            // when the driver attested to having no middle name, say so, so a
+            // two-part name reads as deliberate on the printed DQ file.
+            field(
+                'Full legal name',
+                isV5 && p.noMiddleName === true ? `${show(p.fullName)} (no middle name)` : p.fullName
+            );
             field('Phone', p.phone);
             field('Email', p.email || '— (not provided)');
-            field('Date of birth', p.dob);
+            field('Date of birth', isV5 ? fmtFullDate(p.dob) : p.dob);
 
             doc.moveDown(0.5);
             doc.font('Helvetica-Bold').fontSize(10).fillColor('#7a0000')
@@ -141,7 +182,7 @@ module.exports = function generatePDF(app) {
             field('Issuing state', lic.state);
             field('License number', lic.number);
             field('Class', lic.class);
-            field('Expiration date', lic.expiration);
+            field('Expiration date', isV5 ? fmtFullDate(lic.expiration) : lic.expiration);
             field('Endorsements', lic.endorsements || 'None listed');
             const addlLic = Array.isArray(app.additionalLicenses) ? app.additionalLicenses : [];
             if (addlLic.length) {
@@ -149,7 +190,7 @@ module.exports = function generatePDF(app) {
                 doc.font('Helvetica-Bold').text('Other current licenses/permits:');
                 doc.font('Helvetica');
                 addlLic.forEach((l, i) => {
-                    doc.text(`  ${i + 1}. ${show(l.state)} · ${show(l.number)} · Class ${show(l.class)} · expires ${show(l.expiration)}`);
+                    doc.text(`  ${i + 1}. ${show(l.state)} · ${show(l.number)} · Class ${show(l.class)} · expires ${isV5 ? fmtFullDate(l.expiration) : show(l.expiration)}`);
                 });
             } else {
                 field('Other current licenses/permits', 'None');
@@ -176,7 +217,7 @@ module.exports = function generatePDF(app) {
             } else {
                 acc.forEach((a, i) => {
                     doc.text(
-                        `  ${i + 1}. ${show(a.date)} — ${show(a.description)}  (fatalities: ${show(a.fatalities)}, injuries: ${show(a.injuries)})`
+                        `  ${i + 1}. ${isV5 ? fmtLooseDate(a.date) : show(a.date)} — ${show(a.description)}  (fatalities: ${show(a.fatalities)}, injuries: ${show(a.injuries)})`
                     );
                 });
             }
@@ -188,7 +229,7 @@ module.exports = function generatePDF(app) {
                 doc.text('Applicant reports NO convictions or forfeitures in the past 3 years.');
             } else {
                 vio.forEach((v, i) => {
-                    doc.text(`  ${i + 1}. ${show(v.date)} — ${show(v.offense)} (${show(v.state)}) — penalty: ${show(v.penalty)}`);
+                    doc.text(`  ${i + 1}. ${isV5 ? fmtLooseDate(v.date) : show(v.date)} — ${show(v.offense)} (${show(v.state)}) — penalty: ${show(v.penalty)}`);
                 });
             }
 
@@ -217,7 +258,9 @@ module.exports = function generatePDF(app) {
             section('Employment History (3 years; 10 years for CDL positions)');
             const emp = Array.isArray(app.employment) ? app.employment : [];
             emp.forEach((e, i) => {
-                doc.font('Helvetica-Bold').text(`  ${i + 1}. ${show(e.employer)}  (${show(e.from)} – ${show(e.to)})`);
+                doc.font('Helvetica-Bold').text(
+                    `  ${i + 1}. ${show(e.employer)}  (${isV5 ? fmtMonth(e.from) : show(e.from)} – ${isV5 ? fmtMonth(e.to) : show(e.to)})`
+                );
                 doc.font('Helvetica');
                 if (clean(e.city) || clean(e.state) || clean(e.zip)) {
                     // formVersion >= 4: discrete city/state/zip fields.
