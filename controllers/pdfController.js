@@ -44,6 +44,23 @@ const isUsPhone = (raw) => {
 };
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// ---------- v6 shared constants ----------
+// Keep in sync with forbes-frontend app/application/ApplicationClient.js —
+// the state-code list, ZIP regex, endorsement code list, and the
+// None-exclusivity rule must be identical in both repos (same convention as
+// the gap logic). Change both or neither.
+const OTHER_STATE = 'Other (non-US)';
+const STATE_CODES = new Set([
+    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID',
+    'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS',
+    'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK',
+    'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV',
+    'WI', 'WY', 'DC', 'PR', OTHER_STATE,
+]);
+const ZIP_RE = /^\d{5}(-\d{4})?$/;
+const ENDORSEMENT_CODES = new Set(['H', 'N', 'T', 'P', 'S', 'X', 'NONE']);
+const USDOT_RE = /^\d{1,12}$/;
+
 // ---------- v4 employment-gap detection ----------
 // Mirrors forbes-frontend/app/lib/employmentHistory.js — change both or neither.
 const MONTH_KEY_RE = /^\d{4}-\d{2}$/;
@@ -121,8 +138,95 @@ function computeEmploymentGaps(employment, nowMi) {
     return gaps;
 }
 
+// ---------- v6 residence coverage ----------
+// Mirrors the frontend's residence-coverage rule — change both or neither.
+// The merged address intervals (the current address runs since -> now) must
+// cover the last 36 months: any uncovered run of >= 2 whole months inside the
+// [now-36 .. now] window blocks; a single missing month is tolerated
+// (matching the employment-gap tolerance). Unlike employment, time before the
+// earliest listed address IS a gap — the window itself must be covered.
+// Coverage only: no per-gap explanations for addresses.
+// Returns [{ from: "YYYY-MM", to: "YYYY-MM" }] for every uncovered run.
+function computeResidenceGaps(addresses, nowMi) {
+    const intervals = [];
+    for (const a of addresses) {
+        const start = monthIndexOf(a.from);
+        if (start === null) continue;
+        const isCurrent = /^present$/i.test(String(a.to ?? '').trim());
+        const end = isCurrent ? nowMi : monthIndexOf(a.to);
+        if (end === null || end < start) continue;
+        intervals.push([start, end]);
+    }
+    intervals.sort((x, y) => x[0] - y[0]);
+    const merged = [];
+    for (const cur of intervals) {
+        const prev = merged[merged.length - 1];
+        if (prev && cur[0] <= prev[1] + 1) {
+            if (cur[1] > prev[1]) prev[1] = cur[1];
+        } else {
+            merged.push(cur.slice());
+        }
+    }
+    const windowStart = nowMi - 36;
+    const gaps = [];
+    let cursor = windowStart;
+    const pushGap = (gapFrom, gapTo) => {
+        if (gapTo - gapFrom + 1 < 2) return; // single missing month tolerated
+        gaps.push({ from: monthKeyOf(gapFrom), to: monthKeyOf(gapTo) });
+    };
+    for (const [start, end] of merged) {
+        if (end < windowStart) continue;
+        if (cursor > nowMi) break;
+        if (start > cursor) pushGap(cursor, Math.min(start - 1, nowMi));
+        if (end + 1 > cursor) cursor = end + 1;
+    }
+    if (cursor <= nowMi) pushGap(cursor, nowMi);
+    return gaps;
+}
+
 // Exposed for the gap-algorithm parity tests only; not used by any route.
-exports._employmentGapInternals = { monthIndexOf, monthKeyOf, computeEmploymentGaps };
+exports._employmentGapInternals = {
+    monthIndexOf,
+    monthKeyOf,
+    monthLabel,
+    currentMonthIndex,
+    computeEmploymentGaps,
+    computeResidenceGaps,
+};
+
+// ---------- office JSON whitelist ----------
+// The office-facing JSON attachment is assembled ONLY from these known,
+// validated keys — never by spreading raw request sub-objects — so junk or
+// unexpected keys in a payload can never ride along to the office inbox.
+// The key lists cover every field the PDF generator reads (all form
+// versions), so the office can still regenerate the PDF from the JSON.
+const pickKnown = (src, keys) => {
+    const out = {};
+    if (!src || typeof src !== 'object') return out;
+    for (const k of keys) {
+        if (src[k] !== undefined) out[k] = src[k];
+    }
+    return out;
+};
+const CURRENT_ADDRESS_KEYS = ['street', 'city', 'state', 'zip', 'since', 'sinceYear'];
+const PREV_ADDRESS_KEYS = ['street', 'city', 'state', 'zip', 'from', 'to'];
+const LICENSE_KEYS = [
+    'state', 'number', 'class', 'expiration', 'endorsements', 'endorsementCodes',
+    'restrictions', 'everDeniedRevokedSuspended', 'deniedExplanation',
+];
+const ADDITIONAL_LICENSE_KEYS = ['state', 'number', 'class', 'expiration'];
+const EXPERIENCE_KEYS = ['equipmentType', 'years', 'approxMiles'];
+const ACCIDENT_KEYS = ['date', 'description', 'fatalities', 'injuries'];
+const VIOLATION_KEYS = ['date', 'offense', 'state', 'penalty'];
+// Every employment key across legacy/v4/v5/v6 (cityState is the legacy
+// combined city/state field; usdotNumber/mcNumber/authorityStatus/tpaName/
+// tpaPhone/leasedDuringPeriod are the v4-v6 self-employment block).
+const EMPLOYMENT_KEYS = [
+    'employer', 'street', 'cityState', 'city', 'state', 'zip', 'phone',
+    'from', 'to', 'current', 'position', 'reasonForLeaving', 'fmcsrSubject',
+    'safetySensitive', 'selfEmployed', 'usdotNumber', 'mcNumber',
+    'authorityStatus', 'tpaName', 'tpaPhone', 'leasedDuringPeriod',
+];
 
 function bad(res, message) {
     return res.status(400).json({ message });
@@ -157,6 +261,11 @@ exports.sendPDF = async (req, res) => {
         // v4 payloads (cached bundles from the v4 release day) and legacy
         // payloads keep the fullName field and today's rules exactly.
         const isV5 = Number(body.formVersion) >= 5;
+        // formVersion 6 added residence date coverage, endorsement checkboxes
+        // + required restrictions, per-employer position/state-code/ZIP rules,
+        // and the structured self-employment block. As with v4/v5, older
+        // payloads keep their rules byte-identical.
+        const isV6 = Number(body.formVersion) >= 6;
 
         // ---------- position ----------
         const positionLabel = POSITIONS[body.position];
@@ -201,10 +310,61 @@ exports.sendPDF = async (req, res) => {
         if (!str(ca.street, 200) || !str(ca.city, 100) || !str(ca.state, 40) || !str(ca.zip, 12)) {
             return bad(res, 'Complete current address is required.');
         }
-        const prevAddresses = Array.isArray(p.previousAddresses) ? p.previousAddresses.slice(0, 6) : [];
+        // Cap mirrored with the frontend's Add-address button (max 12 on both
+        // sides — change both or neither), so a UI-valid list is never
+        // silently truncated here.
+        const prevAddresses = Array.isArray(p.previousAddresses) ? p.previousAddresses.slice(0, 12) : [];
         for (const a of prevAddresses) {
             if (!str(a.street, 200) || !str(a.city, 100) || !str(a.state, 40) || !str(a.zip, 12)) {
                 return bad(res, 'Each previous address must be complete.');
+            }
+        }
+        if (isV6) {
+            // v6 residence dates: "since" (YYYY-MM) replaced the year-only
+            // sinceYear on the current address; previous addresses carry
+            // from/to months. ("Present" is not accepted here — the current
+            // address is the only open-ended one.)
+            if (monthIndexOf(ca.since) === null) {
+                return bad(res, 'The month you moved to your current address is required.');
+            }
+            // Future months: one month ahead is tolerated (same client-clock
+            // skew allowance as the gap/coverage mirrors); anything beyond
+            // that is rejected. The blocking sentence must stay byte-identical
+            // to the frontend's — change both or neither.
+            const futureMiLimit = currentMonthIndex() + 1;
+            if (monthIndexOf(ca.since) > futureMiLimit) {
+                return bad(res, "Address dates can't be in the future.");
+            }
+            for (const a of prevAddresses) {
+                if (monthIndexOf(a.from) === null || monthIndexOf(a.to) === null) {
+                    return bad(res, 'Each previous address needs the months you lived there (from and to).');
+                }
+                if (monthIndexOf(a.from) > futureMiLimit || monthIndexOf(a.to) > futureMiLimit) {
+                    return bad(res, "Address dates can't be in the future.");
+                }
+                // Server-only backstop (the frontend already blocks inverted
+                // ranges before submit): To must not precede From.
+                if (monthIndexOf(a.to) < monthIndexOf(a.from)) {
+                    return bad(res, 'Each address needs real months, and From must come before To.');
+                }
+            }
+            // Coverage mirror (same one-month client-clock tolerance as the
+            // employment-gap mirror): reject only when the addresses fail to
+            // cover the window for BOTH the server's current month and the
+            // previous one. The blocking sentence must stay byte-identical to
+            // the frontend's — change both or neither.
+            const addrEntries = [
+                { from: ca.since, to: 'Present' },
+                ...prevAddresses.map((a) => ({ from: a.from, to: a.to })),
+            ];
+            const nowMiAddr = currentMonthIndex();
+            const addrGaps = computeResidenceGaps(addrEntries, nowMiAddr);
+            if (addrGaps.length && computeResidenceGaps(addrEntries, nowMiAddr - 1).length) {
+                const g = addrGaps[0];
+                return bad(
+                    res,
+                    `Your addresses need to cover the last 3 years — add the address you lived at during ${monthLabel(monthIndexOf(g.from))} – ${monthLabel(monthIndexOf(g.to))}.`
+                );
             }
         }
 
@@ -217,6 +377,26 @@ exports.sendPDF = async (req, res) => {
         const everDenied = lic.everDeniedRevokedSuspended === true;
         if (everDenied && !str(lic.deniedExplanation, 600)) {
             return bad(res, 'Please explain the license denial/suspension/revocation.');
+        }
+        if (isV6) {
+            // v6 endorsements: checkbox codes replaced the free-text field.
+            // "NONE" is mutually exclusive with every other code — the None-
+            // exclusivity rule is mirrored in the frontend; change both or
+            // neither.
+            const codes = Array.isArray(lic.endorsementCodes) ? lic.endorsementCodes : [];
+            if (
+                !codes.length ||
+                !codes.every((c) => ENDORSEMENT_CODES.has(c)) ||
+                new Set(codes).size !== codes.length
+            ) {
+                return bad(res, 'Please select your CDL endorsements — or "None".');
+            }
+            if (codes.includes('NONE') && codes.length > 1) {
+                return bad(res, '"None" cannot be combined with other endorsements.');
+            }
+            if (!str(lic.restrictions, 80)) {
+                return bad(res, "CDL restrictions are required — enter them as shown on your license, or 'None'.");
+            }
         }
         // 391.21(b)(5): EACH unexpired license/permit — optional extras list.
         const additionalLicenses = Array.isArray(body.additionalLicenses)
@@ -312,6 +492,52 @@ exports.sendPDF = async (req, res) => {
                 }
             } else if (!baseOk) {
                 return bad(res, 'Each employer needs a name, street address, from/to dates, and a reason for leaving.');
+            }
+            if (isV6) {
+                // v6: state is a select storing a 2-letter code (or the
+                // literal "Other (non-US)"), the ZIP gets a real format rule,
+                // and position/reason firm up from rendered-only to required.
+                const stateVal = String(e.state ?? '').trim();
+                if (!STATE_CODES.has(stateVal)) {
+                    return bad(res, "Please select each employer's state from the list.");
+                }
+                if (stateVal === OTHER_STATE) {
+                    // Non-US employer: any non-empty postal code up to 12 chars
+                    // (already enforced by the v4 zip check above).
+                } else if (!ZIP_RE.test(String(e.zip ?? '').trim())) {
+                    return bad(res, 'Each employer ZIP code must look like 12345 or 12345-6789.');
+                }
+                if (!str(e.position, 100)) {
+                    return bad(res, 'Each employer needs the position you held.');
+                }
+                if (String(e.reasonForLeaving ?? '').trim().length < 3) {
+                    return bad(res, 'Each reason for leaving needs at least 3 characters.');
+                }
+                const usdotVal = String(e.usdotNumber ?? '').trim();
+                if (e.selfEmployed === true) {
+                    // Structured self-employment block (v6).
+                    if (!USDOT_RE.test(usdotVal)) {
+                        return bad(res, "Your company's USDOT number is required for each self-employed period (digits only, 12 max).");
+                    }
+                    if (String(e.mcNumber ?? '').trim().length > 12) {
+                        return bad(res, 'MC number must be 12 characters or fewer.');
+                    }
+                    if (!['active', 'inactive', 'revoked'].includes(e.authorityStatus)) {
+                        return bad(res, 'Please select the authority status for each self-employed period.');
+                    }
+                    if (e.leasedDuringPeriod !== true && e.leasedDuringPeriod !== false) {
+                        return bad(res, 'Please answer whether you were leased to another motor carrier during each self-employed period.');
+                    }
+                    // tpaName (required iff safetySensitive) is enforced by
+                    // the v4 block above; v6 adds the C/TPA phone.
+                    if (e.safetySensitive === true && !isUsPhone(e.tpaPhone)) {
+                        return bad(res, 'Self-employed entries with DOT drug & alcohol testing need a valid US phone number for the consortium/TPA.');
+                    }
+                } else if (usdotVal !== '' && !USDOT_RE.test(usdotVal)) {
+                    // Optional per-employer USDOT (shown when the FMCSR box is
+                    // checked in the UI; accepted regardless here).
+                    return bad(res, 'Company USDOT numbers must be digits only (12 max).');
+                }
             }
         }
 
@@ -469,6 +695,41 @@ exports.sendPDF = async (req, res) => {
 
         const pdfBuffer = await pdfGenerator(application);
 
+        // Office-facing JSON twin of the PDF (ALL form versions),
+        // pretty-printed so the office can regenerate the PDF or export to
+        // the background-check vendor. Assembled from an explicit whitelist
+        // of validated fields per section — never by spreading raw request
+        // sub-objects — so it can never contain the turnstile token, the
+        // honeypot, raw request internals, or any unexpected payload keys.
+        const officeApplication = {
+            formVersion: application.formVersion,
+            position: body.position,
+            personal: {
+                ...(isV5 ? { firstName, middleName, lastName, noMiddleName } : {}),
+                fullName,
+                phone: p.phone,
+                email,
+                dob: p.dob,
+                currentAddress: pickKnown(ca, CURRENT_ADDRESS_KEYS),
+                previousAddresses: prevAddresses.map((a) => pickKnown(a, PREV_ADDRESS_KEYS)),
+            },
+            license: pickKnown(lic, LICENSE_KEYS),
+            additionalLicenses: additionalLicenses.map((l) => pickKnown(l, ADDITIONAL_LICENSE_KEYS)),
+            experience: experience.map((e) => pickKnown(e, EXPERIENCE_KEYS)),
+            accidents: accidents.map((a) => pickKnown(a, ACCIDENT_KEYS)),
+            violations: violations.map((v) => pickKnown(v, VIOLATION_KEYS)),
+            employment: employment.map((e) => pickKnown(e, EMPLOYMENT_KEYS)),
+            employmentGaps,
+            historyComplete: application.historyComplete,
+            gapsExplanation: application.gapsExplanation,
+            consents: application.consents,
+            certification: application.certification,
+            submittedAtISO,
+            submittedAtCT,
+            submitterIp,
+        };
+        const applicationJson = Buffer.from(JSON.stringify(officeApplication, null, 2), 'utf8');
+
         // v5 has the real last name; v4/legacy fall back to the last token of
         // the free-text full name, exactly as before.
         const fileLastName =
@@ -500,6 +761,11 @@ exports.sendPDF = async (req, res) => {
                     filename: `DOT-Application-${fileLastName}.pdf`,
                     content: pdfBuffer,
                     contentType: 'application/pdf',
+                },
+                {
+                    filename: `DOT-Application-${fileLastName}.json`,
+                    content: applicationJson,
+                    contentType: 'application/json',
                 },
             ],
         });
