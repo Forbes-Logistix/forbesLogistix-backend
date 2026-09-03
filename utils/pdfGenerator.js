@@ -75,6 +75,29 @@ const fmtLooseDate = (v) => {
     return show(v);
 };
 
+// "YYYY-MM" -> absolute month index for sorting, or null if unparseable.
+const monthIdx = (v) => {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(v ?? '').trim());
+    if (!m) return null;
+    const mo = Number(m[2]);
+    if (mo < 1 || mo > 12) return null;
+    return Number(m[1]) * 12 + (mo - 1);
+};
+
+// v6 endorsement checkbox codes -> printed labels. Keep in sync with the
+// frontend's endorsement list in app/application/ApplicationClient.js and the
+// controller's ENDORSEMENT_CODES — change all or none.
+const ENDORSEMENT_LABELS = {
+    H: 'Hazmat',
+    N: 'Tank',
+    T: 'Doubles/Triples',
+    P: 'Passenger',
+    S: 'School bus',
+    X: 'Tank + Hazmat',
+};
+
+const AUTHORITY_LABELS = { active: 'Active', inactive: 'Inactive', revoked: 'Revoked' };
+
 module.exports = function generatePDF(app) {
     return new Promise((resolve, reject) => {
         try {
@@ -86,6 +109,13 @@ module.exports = function generatePDF(app) {
             // (full months for all versions, by design). Machine-facing
             // values are untouched.
             const isV5 = Number(app.formVersion) >= 5;
+            // formVersion >= 6 adds (application section only): the
+            // employment-coverage header line, most-recent-first employer
+            // ordering, the structured self-employment block, per-employer
+            // USDOT, endorsement codes + restrictions, and residence date
+            // ranges. Every one of these is gated — v5/v4/legacy renders stay
+            // byte-identical.
+            const isV6 = Number(app.formVersion) >= 6;
 
             const doc = new PDFDocument({ size: 'LETTER', margin: 54 });
             const buffers = [];
@@ -165,14 +195,22 @@ module.exports = function generatePDF(app) {
             doc.moveDown(0.5);
             const ca = p.currentAddress || {};
             field('Current address', `${show(ca.street)}, ${show(ca.city)}, ${show(ca.state)} ${show(ca.zip)}`);
-            field('At this address since (year)', ca.sinceYear);
+            if (isV6) {
+                // v6 replaced the year-only sinceYear with a YYYY-MM "since".
+                field('At this address since', fmtMonth(ca.since));
+            } else {
+                field('At this address since (year)', ca.sinceYear);
+            }
             const prevAddrs = Array.isArray(p.previousAddresses) ? p.previousAddresses : [];
             if (prevAddrs.length) {
                 doc.moveDown(0.3);
                 doc.font('Helvetica-Bold').text('Previous addresses (last 3 years):');
                 doc.font('Helvetica');
                 prevAddrs.forEach((a, i) => {
-                    doc.text(`  ${i + 1}. ${show(a.street)}, ${show(a.city)}, ${show(a.state)} ${show(a.zip)}`);
+                    doc.text(
+                        `  ${i + 1}. ${show(a.street)}, ${show(a.city)}, ${show(a.state)} ${show(a.zip)}` +
+                        (isV6 ? `  (${fmtMonth(a.from)} – ${fmtMonth(a.to)})` : '')
+                    );
                 });
             }
 
@@ -183,7 +221,19 @@ module.exports = function generatePDF(app) {
             field('License number', lic.number);
             field('Class', lic.class);
             field('Expiration date', isV5 ? fmtFullDate(lic.expiration) : lic.expiration);
-            field('Endorsements', lic.endorsements || 'None listed');
+            if (isV6) {
+                // v6: checkbox codes. "NONE" prints as the single word "None";
+                // otherwise each code prints with its label, e.g.
+                // "H (Hazmat), X (Tank + Hazmat)".
+                const codes = Array.isArray(lic.endorsementCodes) ? lic.endorsementCodes : [];
+                const endorsementText = codes.includes('NONE')
+                    ? 'None'
+                    : codes.map((c) => `${clean(c)} (${ENDORSEMENT_LABELS[c] || clean(c)})`).join(', ');
+                field('Endorsements', endorsementText);
+                field('Restrictions (as shown on CDL)', lic.restrictions);
+            } else {
+                field('Endorsements', lic.endorsements || 'None listed');
+            }
             const addlLic = Array.isArray(app.additionalLicenses) ? app.additionalLicenses : [];
             if (addlLic.length) {
                 doc.moveDown(0.3);
@@ -257,7 +307,39 @@ module.exports = function generatePDF(app) {
             // ---------- Employment ----------
             section('Employment History (3 years; 10 years for CDL positions)');
             const emp = Array.isArray(app.employment) ? app.employment : [];
-            emp.forEach((e, i) => {
+            // v6: coverage header line + entries sorted most-recent-first (by
+            // From, descending) regardless of input order. The consent pages
+            // below keep the original array order — they are untouchable.
+            let empPrint = emp;
+            if (isV6) {
+                let earliestFromKey = null;
+                let latestToKey = null;
+                let hasPresent = false;
+                for (const e of emp) {
+                    const fromMi = monthIdx(e.from);
+                    if (fromMi !== null && (earliestFromKey === null || fromMi < monthIdx(earliestFromKey))) {
+                        earliestFromKey = String(e.from).trim();
+                    }
+                    if (e.current === true || /^present$/i.test(String(e.to ?? '').trim())) {
+                        hasPresent = true;
+                    } else {
+                        const toMi = monthIdx(e.to);
+                        if (toMi !== null && (latestToKey === null || toMi > monthIdx(latestToKey))) {
+                            latestToKey = String(e.to).trim();
+                        }
+                    }
+                }
+                if (earliestFromKey !== null) {
+                    doc.text(
+                        `Employment history covers ${fmtMonth(earliestFromKey)} – ${hasPresent ? 'Present' : fmtMonth(latestToKey)}.`
+                    );
+                    doc.moveDown(0.3);
+                }
+                empPrint = emp
+                    .slice()
+                    .sort((a, b) => (monthIdx(b.from) ?? -Infinity) - (monthIdx(a.from) ?? -Infinity));
+            }
+            empPrint.forEach((e, i) => {
                 doc.font('Helvetica-Bold').text(
                     `  ${i + 1}. ${show(e.employer)}  (${isV5 ? fmtMonth(e.from) : show(e.from)} – ${isV5 ? fmtMonth(e.to) : show(e.to)})`
                 );
@@ -274,10 +356,34 @@ module.exports = function generatePDF(app) {
                 doc.text(
                     `      Subject to FMCSRs: ${yn(e.fmcsrSubject)}  ·  Safety-sensitive / DOT drug & alcohol testing: ${yn(e.safetySensitive)}`
                 );
+                if (isV6 && e.selfEmployed !== true && clean(e.usdotNumber)) {
+                    // v6 optional per-employer USDOT (self-employed periods
+                    // print theirs in the block below instead).
+                    doc.text(`      Company USDOT number: ${clean(e.usdotNumber)}`);
+                }
                 if (e.selfEmployed === true) {
-                    doc.text(
-                        `      Self-employed (own company${clean(e.usdotNumber) ? `, USDOT ${clean(e.usdotNumber)}` : ''})  ·  Random-pool C/TPA: ${show(e.tpaName)}`
-                    );
+                    if (isV6) {
+                        // v6 structured self-employment block.
+                        doc.text(
+                            `      Self-employed (own company)  ·  USDOT ${show(e.usdotNumber)}` +
+                            `${clean(e.mcNumber) ? `  ·  MC ${clean(e.mcNumber)}` : ''}` +
+                            `  ·  Authority status: ${AUTHORITY_LABELS[String(e.authorityStatus ?? '').trim().toLowerCase()] || show(e.authorityStatus)}`
+                        );
+                        doc.text(
+                            `      Random-pool C/TPA: ${show(e.tpaName)}${clean(e.tpaPhone) ? `  ·  ${clean(e.tpaPhone)}` : ''}`
+                        );
+                        doc.text(`      Leased to another carrier during this period: ${yn(e.leasedDuringPeriod)}`);
+                        if (e.leasedDuringPeriod === true) {
+                            doc.fontSize(8).fillColor('#555555').text(
+                                '      Leased periods: that carrier is a DOT-regulated previous employer — add it as its own employer entry with the dates you were leased.'
+                            );
+                            doc.fontSize(10).fillColor('#111111');
+                        }
+                    } else {
+                        doc.text(
+                            `      Self-employed (own company${clean(e.usdotNumber) ? `, USDOT ${clean(e.usdotNumber)}` : ''})  ·  Random-pool C/TPA: ${show(e.tpaName)}`
+                        );
+                    }
                 }
                 doc.moveDown(0.3);
             });
