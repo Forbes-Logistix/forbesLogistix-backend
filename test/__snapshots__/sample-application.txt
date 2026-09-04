@@ -1,8 +1,8 @@
 DRIVER QUALIFICATION APPLICATION
 Forbes Logistix, LLC  ·  3180 Utica Ave, Jackson, MS 39209  ·  USDOT 4361817  ·  MC 1706978
-Application per 49 CFR 391.21 — submitted electronically via forbeslogistix.com/application
+Application per 49 CFR 391.21, submitted electronically via forbeslogistix.com/application
 POSITION APPLIED FOR
-Company Flatbed Driver — Southeast
+Company Flatbed Driver (Southeast)
 APPLICANT
 Full legal name: 
 Marcus DeWayne Webb
@@ -46,10 +46,10 @@ None
 License ever denied, suspended, or revoked: 
 No
 DRIVING EXPERIENCE
-  1. Flatbed 48/53 ft — 9 year(s), approx. 900,000 miles
-ACCIDENT RECORD — PAST 3 YEARS
-  1. November 2, 2024 — Minor backing collision at shipper yard  (fatalities: 0, injuries: 0)
-TRAFFIC CONVICTIONS & BOND/COLLATERAL FORFEITURES — PAST 3 YEARS
+  1. Flatbed 48/53 ft: 9 year(s), approx. 900,000 miles
+ACCIDENT RECORD (PAST 3 YEARS)
+  1. November 2, 2024: Minor backing collision at shipper yard  (fatalities: 0, injuries: 0)
+TRAFFIC CONVICTIONS & BOND/COLLATERAL FORFEITURES (PAST 3 YEARS)
 Applicant reports NO convictions or forfeitures in the past 3 years.
 NOTICE TO APPLICANT — 49 CFR 391.21(D)
 Before you submitted this application, Forbes Logistix LLC (USDOT 4361817 / MC 1706978) informed you, as required by 
@@ -79,7 +79,7 @@ Employment history covers January 2016 – Present.
       Self-employed (own company)  ·  USDOT 3456789  ·  MC 987654  ·  Authority status: Inactive
       Random-pool C/TPA: SafeRoad C/TPA Services  ·  (601) 555-0177
       Leased to another carrier during this period: Yes
-      Leased periods: that carrier is a DOT-regulated previous employer — add it as its own employer entry with the dates you were leased.
+      Leased periods: that carrier is a DOT-regulated previous employer; add it as its own employer entry with the dates you were leased.
   3. Magnolia Carriers Inc  (March 2018 – March 2020)
       Address: 9 Port St, Vicksburg, MS 39180  ·  Phone: 6015550188
       Position: Regional flatbed driver
@@ -101,7 +101,7 @@ complete to the best of my knowledge.
 Electronic signature (typed full legal name): 
 Marcus DeWayne Webb
 E-signature consent: 
-Agreed — typed name constitutes electronic signature
+Agreed (typed name constitutes electronic signature)
 Signed (Central Time): 
 Aug 15, 2026, 9:30 AM CT
 Signed (UTC): 

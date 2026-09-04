@@ -54,7 +54,7 @@ test('v5 required rules are still enforced (ladder intact below v6)', async () =
     body.personal.noMiddleName = false;
     const res = await post(body);
     assert.strictEqual(res.statusCode, 400);
-    assert.strictEqual(res.body.message, 'Middle name is required — or confirm you have no middle name.');
+    assert.strictEqual(res.body.message, 'Middle name is required unless you confirm you have no middle name.');
 });
 
 test('v4 gap mirror is still enforced for v4 payloads', async () => {

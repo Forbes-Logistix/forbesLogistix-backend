@@ -26,9 +26,9 @@ const CARRIER = {
 };
 
 const POSITION_LABELS = {
-    'flatbed-southeast': 'Company Flatbed Driver — Southeast',
-    'reefer-dallas': 'Company Reefer Driver — Dedicated Dallas Outbound',
-    'owner-operator-flatbed': 'Owner-Operator — Flatbed (Southeast)',
+    'flatbed-southeast': 'Company Flatbed Driver (Southeast)',
+    'reefer-dallas': 'Company Reefer Driver (Dedicated Dallas Outbound)',
+    'owner-operator-flatbed': 'Owner-Operator Flatbed (Southeast)',
 };
 
 // Strip control characters; pdfkit renders anything else safely as text.
@@ -37,8 +37,8 @@ const clean = (v) =>
         .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
         .trim();
 
-const show = (v) => (clean(v) === '' ? '—' : clean(v));
-const yn = (v) => (v === true ? 'Yes' : v === false ? 'No' : '—');
+const show = (v) => (clean(v) === '' ? '-' : clean(v));
+const yn = (v) => (v === true ? 'Yes' : v === false ? 'No' : '-');
 
 // "YYYY-MM" → "March 2022" (falls back to the raw value if unparseable).
 // Full month names, in lockstep with the frontend's MONTH_NAMES — the
@@ -151,7 +151,7 @@ module.exports = function generatePDF(app) {
                 `${CARRIER.name}  ·  ${CARRIER.address}  ·  ${CARRIER.identifiers}`,
                 { align: 'center' }
             );
-            doc.fontSize(9).text('Application per 49 CFR 391.21 — submitted electronically via forbeslogistix.com/application', {
+            doc.fontSize(9).text('Application per 49 CFR 391.21, submitted electronically via forbeslogistix.com/application', {
                 align: 'center',
             });
             doc.fillColor('#111111');
@@ -172,7 +172,7 @@ module.exports = function generatePDF(app) {
                 isV5 && p.noMiddleName === true ? `${show(p.fullName)} (no middle name)` : p.fullName
             );
             field('Phone', p.phone);
-            field('Email', p.email || '— (not provided)');
+            field('Email', p.email || 'Not provided');
             field('Date of birth', isV5 ? fmtFullDate(p.dob) : p.dob);
 
             doc.moveDown(0.5);
@@ -255,31 +255,31 @@ module.exports = function generatePDF(app) {
             const exp = Array.isArray(app.experience) ? app.experience : [];
             exp.forEach((e, i) => {
                 doc.text(
-                    `  ${i + 1}. ${show(e.equipmentType)} — ${show(e.years)} year(s), approx. ${show(e.approxMiles)} miles`
+                    `  ${i + 1}. ${show(e.equipmentType)}: ${show(e.years)} year(s), approx. ${show(e.approxMiles)} miles`
                 );
             });
 
             // ---------- Accidents ----------
-            section('Accident Record — Past 3 Years');
+            section('Accident Record (Past 3 Years)');
             const acc = Array.isArray(app.accidents) ? app.accidents : [];
             if (!acc.length) {
                 doc.text('Applicant reports NO accidents in the past 3 years.');
             } else {
                 acc.forEach((a, i) => {
                     doc.text(
-                        `  ${i + 1}. ${isV5 ? fmtLooseDate(a.date) : show(a.date)} — ${show(a.description)}  (fatalities: ${show(a.fatalities)}, injuries: ${show(a.injuries)})`
+                        `  ${i + 1}. ${isV5 ? fmtLooseDate(a.date) : show(a.date)}: ${show(a.description)}  (fatalities: ${show(a.fatalities)}, injuries: ${show(a.injuries)})`
                     );
                 });
             }
 
             // ---------- Violations ----------
-            section('Traffic Convictions & Bond/Collateral Forfeitures — Past 3 Years');
+            section('Traffic Convictions & Bond/Collateral Forfeitures (Past 3 Years)');
             const vio = Array.isArray(app.violations) ? app.violations : [];
             if (!vio.length) {
                 doc.text('Applicant reports NO convictions or forfeitures in the past 3 years.');
             } else {
                 vio.forEach((v, i) => {
-                    doc.text(`  ${i + 1}. ${isV5 ? fmtLooseDate(v.date) : show(v.date)} — ${show(v.offense)} (${show(v.state)}) — penalty: ${show(v.penalty)}`);
+                    doc.text(`  ${i + 1}. ${isV5 ? fmtLooseDate(v.date) : show(v.date)}: ${show(v.offense)} (${show(v.state)}); penalty: ${show(v.penalty)}`);
                 });
             }
 
@@ -375,7 +375,7 @@ module.exports = function generatePDF(app) {
                         doc.text(`      Leased to another carrier during this period: ${yn(e.leasedDuringPeriod)}`);
                         if (e.leasedDuringPeriod === true) {
                             doc.fontSize(8).fillColor('#555555').text(
-                                '      Leased periods: that carrier is a DOT-regulated previous employer — add it as its own employer entry with the dates you were leased.'
+                                '      Leased periods: that carrier is a DOT-regulated previous employer; add it as its own employer entry with the dates you were leased.'
                             );
                             doc.fontSize(10).fillColor('#111111');
                         }
@@ -420,7 +420,7 @@ module.exports = function generatePDF(app) {
             );
             doc.moveDown(0.5);
             field('Electronic signature (typed full legal name)', cert.signature);
-            field('E-signature consent', cert.esignConsent ? 'Agreed — typed name constitutes electronic signature' : '—');
+            field('E-signature consent', cert.esignConsent ? 'Agreed (typed name constitutes electronic signature)' : '-');
             field('Signed (Central Time)', app.submittedAtCT);
             field('Signed (UTC)', app.submittedAtISO);
             field('Submitted from IP', app.submitterIp);
