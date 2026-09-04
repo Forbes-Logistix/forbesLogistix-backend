@@ -18,12 +18,12 @@ const APPLICATION_RECEIVER_EMAIL =
     process.env.APPLICATION_RECEIVER_EMAIL || 'recruiting@forbeslogistix.com';
 
 const POSITIONS = {
-    'flatbed-southeast': 'Flatbed — Southeast',
-    'reefer-dallas': 'Reefer — Dallas',
+    'flatbed-southeast': 'Flatbed (Southeast)',
+    'reefer-dallas': 'Reefer (Dallas)',
     // Owner-operators leased to our authority get driver-qualified with the
     // SAME 391.21 application (their DQ file is ours); the Part 376 equipment
     // lease is separate onboarding paperwork, not part of this form.
-    'owner-operator-flatbed': 'Owner-Operator — Flatbed (Southeast)',
+    'owner-operator-flatbed': 'Owner-Operator Flatbed (Southeast)',
 };
 
 // ---------- validation helpers ----------
@@ -294,7 +294,7 @@ exports.sendPDF = async (req, res) => {
             } else {
                 middleName = str(p.middleName, 60);
                 if (!middleName) {
-                    return bad(res, 'Middle name is required — or confirm you have no middle name.');
+                    return bad(res, 'Middle name is required unless you confirm you have no middle name.');
                 }
             }
             fullName = [firstName, middleName, lastName].filter(Boolean).join(' ');
@@ -363,7 +363,7 @@ exports.sendPDF = async (req, res) => {
                 const g = addrGaps[0];
                 return bad(
                     res,
-                    `Your addresses need to cover the last 3 years — add the address you lived at during ${monthLabel(monthIndexOf(g.from))} – ${monthLabel(monthIndexOf(g.to))}.`
+                    `Your addresses need to cover the last 3 years. Add the address you lived at during ${monthLabel(monthIndexOf(g.from))} – ${monthLabel(monthIndexOf(g.to))}.`
                 );
             }
         }
@@ -389,13 +389,13 @@ exports.sendPDF = async (req, res) => {
                 !codes.every((c) => ENDORSEMENT_CODES.has(c)) ||
                 new Set(codes).size !== codes.length
             ) {
-                return bad(res, 'Please select your CDL endorsements — or "None".');
+                return bad(res, 'Please select your CDL endorsements, or "None".');
             }
             if (codes.includes('NONE') && codes.length > 1) {
                 return bad(res, '"None" cannot be combined with other endorsements.');
             }
             if (!str(lic.restrictions, 80)) {
-                return bad(res, "CDL restrictions are required — enter them as shown on your license, or 'None'.");
+                return bad(res, "CDL restrictions are required. Enter them as shown on your license, or 'None'.");
             }
         }
         // 391.21(b)(5): EACH unexpired license/permit — optional extras list.
@@ -736,7 +736,7 @@ exports.sendPDF = async (req, res) => {
             (isV5 ? lastName : fullName.split(/\s+/).pop()).replace(/[^A-Za-z0-9-]/g, '') || 'Driver';
         await sendViaGraph({
             to: APPLICATION_RECEIVER_EMAIL,
-            subject: `DOT Driver Application — ${positionLabel} — ${fullName}`,
+            subject: `DOT Driver Application - ${positionLabel} - ${fullName}`,
             text:
                 `A full DOT driver qualification application was submitted at forbeslogistix.com/application.\n\n` +
                 `Name: ${fullName}\n` +
@@ -744,9 +744,9 @@ exports.sendPDF = async (req, res) => {
                 `Position: ${positionLabel}\n` +
                 `Submitted: ${submittedAtCT} (${submittedAtISO})\n\n` +
                 `Consents signed electronically (all printed in the attached PDF):\n` +
-                `- FCRA background report authorization${fcra.freeCopy === true ? ' — FREE COPY REQUESTED: send the driver a copy of any report you obtain' : ''}\n` +
+                `- FCRA background report authorization${fcra.freeCopy === true ? ' (FREE COPY REQUESTED: send the driver a copy of any report you obtain)' : ''}\n` +
                 `- PSP disclosure & authorization (FMCSA-mandated form)\n` +
-                `- Drug & alcohol history release — self-report answer: ${da.selfReport === true ? 'YES (see explanation in PDF — return-to-duty documentation required)' : 'No'}\n` +
+                `- Drug & alcohol history release; self-report answer: ${da.selfReport === true ? 'YES (see explanation in PDF; return-to-duty documentation required)' : 'No'}\n` +
                 `- Clearinghouse pre-employment query acknowledged${da.limitedQuery === true ? '; limited-query general consent also signed' : ''}\n\n` +
                 `Before running checks:\n` +
                 `1. SSN: never collected online. Take it by PHONE, write it in the OFFICE USE block on ` +

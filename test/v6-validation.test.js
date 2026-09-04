@@ -246,7 +246,7 @@ test('v6: residence coverage blocks with the exact shared sentence', async () =>
     body.personal.currentAddress.since = ym(-10);
     const res = await expect400(body);
     // Gap: window start (now-36) .. the month before the move-in.
-    const expected = `Your addresses need to cover the last 3 years — add the address you lived at during ${monthLabel(
+    const expected = `Your addresses need to cover the last 3 years. Add the address you lived at during ${monthLabel(
         monthIndexOf(ym(-36))
     )} – ${monthLabel(monthIndexOf(ym(-11)))}.`;
     assert.strictEqual(res.body.message, expected);

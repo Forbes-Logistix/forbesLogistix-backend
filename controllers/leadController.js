@@ -14,7 +14,7 @@ const LEAD_RECEIVER_EMAIL = process.env.LEAD_RECEIVER_EMAIL || 'recruiting@forbe
 // line sorts them at a glance. Absent/unknown values fall back to the
 // default flatbed labeling — older clients don't send the field at all.
 const POSITIONS = {
-    'reefer-dallas': { tag: 'REEFER (Dallas)', label: 'Dedicated reefer — Dallas outbound' },
+    'reefer-dallas': { tag: 'REEFER (Dallas)', label: 'Dedicated reefer (Dallas outbound)' },
 };
 const DEFAULT_POSITION_LABEL = 'Flatbed (Southeast)';
 
@@ -112,8 +112,8 @@ exports.sendLead = async (req, res) => {
         await sendViaGraph({
             to: LEAD_RECEIVER_EMAIL,
             subject: pos
-                ? `New Driver Lead — ${pos.tag} — ${trimmedName}`
-                : `New Driver Lead — ${trimmedName}`,
+                ? `New Driver Lead - ${pos.tag} - ${trimmedName}`
+                : `New Driver Lead - ${trimmedName}`,
             text:
                 `New driver lead submitted via the Quick Apply form on forbeslogistix.com.\n\n` +
                 `Name: ${trimmedName}\n` +

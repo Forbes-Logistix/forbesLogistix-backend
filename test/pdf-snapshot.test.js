@@ -76,8 +76,9 @@ test('PDF snapshot fixture exercises the v6 render paths', async () => {
     // Residence date ranges.
     assert.ok(text.includes('February 2024'));
     assert.ok(text.includes('July 2021 – January 2024'));
-    // Never "—" for a v6-required value: show()'s placeholder renders as its
-    // own extracted line (field values follow their label line), so no line
-    // may consist solely of the em-dash placeholder.
-    assert.ok(!lines.some((l) => l.trim() === '—'), 'unexpected "—" placeholder printed for a value');
+    // Never a bare placeholder for a v6-required value: show()'s placeholder
+    // renders as its own extracted line (field values follow their label
+    // line), so no line may consist solely of the "-" placeholder (or the
+    // legacy "—" one).
+    assert.ok(!lines.some((l) => l.trim() === '-' || l.trim() === '—'), 'unexpected "-" placeholder printed for a value');
 });
