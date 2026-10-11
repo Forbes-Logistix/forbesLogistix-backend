@@ -16,6 +16,7 @@ turnstile.verifyTurnstile = async () => ({ ok: true, skipped: true });
 
 // Loaded AFTER the stubs above — order matters.
 const controller = require('../../controllers/pdfController.js');
+const contactController = require('../../controllers/contactController.js');
 
 const { monthIndexOf, monthKeyOf, monthLabel, currentMonthIndex, computeEmploymentGaps, computeResidenceGaps } =
     controller._employmentGapInternals;
@@ -43,6 +44,12 @@ function makeRes() {
 async function post(body) {
     const res = makeRes();
     await controller.sendPDF({ body, ip: '203.0.113.5' }, res);
+    return res;
+}
+
+async function postContact(body) {
+    const res = makeRes();
+    await contactController.sendContact({ body, ip: '203.0.113.5' }, res);
     return res;
 }
 
@@ -238,6 +245,7 @@ function makeLegacyBody() {
 
 module.exports = {
     post,
+    postContact,
     sentMails,
     ym,
     makeV6Body,
