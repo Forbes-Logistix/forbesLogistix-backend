@@ -11,7 +11,15 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 exports.sendContact = async (req, res) => {
     try {
-        const { name, email, message, contactConsent, acceptTerms, turnstileToken } = req.body || {};
+        const { name, email, message, contactConsent, acceptTerms, honeypot, turnstileToken } = req.body || {};
+
+        // Bots fill every field. The hidden honeypot (contact_extra_field on the
+        // frontend) must stay empty. Checked before validation and Turnstile so a
+        // bot gets no signal about which check it tripped.
+        if (honeypot) {
+            // Pretend success so the bot doesn't retry.
+            return res.status(200).json({ message: 'OK' });
+        }
 
         if (!name || !email || !message) {
             return res.status(400).json({ message: 'Name, email, and message are required.' });
